@@ -5,8 +5,12 @@ from enum import Enum
 from turtle import width
 from PIL import ImageTk, Image
 import os
-
-from torch import fill
+from serial.tools import list_ports
+import time
+try:
+    import serial
+except Exception:
+    serial = None
 
 
 # ----------------------------
@@ -42,7 +46,7 @@ class Pin:
     mode: PinMode = PinMode.UNUSED
     state: int = 0        # for DOUT: 0/1
     din: int = 0          # for DIN: 0/1 (reported)
-    adc_v: float = 0.0    # for ADC: volts (reported)
+    adc_count: int = 0    # for ADC: counts (reported)
     pud: str = "None"  # for DIN: up/down/none
     pwm_freq: float = 1000.0
     pwm_duty: float = 0.0
@@ -108,6 +112,7 @@ PIN_MODES = {   0:  [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, Pin
                 20: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, PinMode.MISO0, PinMode.SDA0],
                 21: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, PinMode.SCL0],
                 22: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM],
+                25: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM],
                 26: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, PinMode.ADC],
                 27: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, PinMode.ADC],
                 28: [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, PinMode.ADC]}
@@ -217,8 +222,6 @@ class ScrollableFrame(ttk.Frame):
         self._clamp_yview()
 
 
-
-
 # ----------------------------
 # App
 # ----------------------------
@@ -283,15 +286,69 @@ class PicoGUI(tk.Tk):
         self.uart1_rx_selected = None
         self.uart1_config = {"tx": None, "rx": None, "baud": 115200, "send_text": None, "received_text": None, "bytes_to_send": []}
 
+        # COM port state for serial device selection
+        self.com_port_selected = None
+        self.com_port_var = tk.StringVar(value="None")
+        self.com_port_label_var = tk.StringVar(value="")
+        self.com_ports = []
+        # Serial instance (None when closed). Accessible as `self.ser` per request.
+        self.ser = None
+        self.com_baud_var = tk.StringVar(value="115200")
+
+        # Refresh throttling: limit UI rebuilds to at most 20Hz (50 ms)
+        self._min_refresh_interval = 1.0 / 20.0
+        self._last_refresh_time = 0.0
+        self._refresh_pending_id = None
+        # Route calls through the request method to enforce throttling
+        self.refresh_function_boxes = self.request_refresh_function_boxes
+
         self._build_layout()
         self.refresh_function_boxes()
 
         # demo: set a few initial modes
-        self.set_pin_mode(0, PinMode.DOUT)
-        self.set_pin_mode(26, PinMode.ADC)
-        self.set_pin_mode(1, PinMode.PWM)
-        self.update_gpio_readout(26, adc_v=1.234)
-        self.update_din(12, 1)
+        #self.set_pin_mode(0, PinMode.DOUT)
+        #self.set_pin_mode(26, PinMode.ADC)
+        #self.set_pin_mode(1, PinMode.PWM)
+        self.set_ADC_value(26, 32768)
+
+    # ---------- communication ----------
+    def send_pin_parameter(self, pin, param, value):
+        """Send a pin parameter update to the device.
+
+        `param` is a string indicating the parameter to set, e.g. "mode", "dout", "pwm_freq", etc.
+        `value` is the new value for the parameter.
+        """
+        print(f"\tsend: Set GP{pin} {param} to {value}")
+        
+        if self.ser:
+            data = f"{pin},{param},{value}\n"
+            self.ser.write(data.encode())
+            self.ser.flush()
+
+    # call once after opening serial port:
+    def start_serial_poll(self, interval_ms=20):
+        self._serial_poll_interval = interval_ms
+        if getattr(self, 'ser', None):
+            self._poll_serial()
+
+    def _poll_serial(self):
+        ser = getattr(self, 'ser', None)
+        if ser:
+            try:
+                n = ser.in_waiting
+                if n:
+                    data = ser.read(n)  # or ser.readline()
+                    self._handle_serial_bytes(data)
+            except Exception:
+                pass
+        # schedule next poll
+        self.after(self._serial_poll_interval, self._poll_serial)
+
+    def _handle_serial_bytes(self, data: bytes):
+        # parse and update UI on main thread
+        text = data.decode('utf-8', errors='replace').strip()
+        
+        print(text)
 
     # ---------- layout ----------
 
@@ -320,7 +377,7 @@ class PicoGUI(tk.Tk):
         right = ttk.Frame(self, padding=8)
         right.grid(row=0, column=1, sticky="nsew")
 
-        ttk.Label(right, text="Functions", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        #ttk.Label(right, text="Functions", font=("Segoe UI", 12, "bold")).pack(anchor="w")
 
         self.right_scroll = ScrollableFrame(right)
         self.right_scroll.pack(fill="both", expand=True, pady=(8, 0))
@@ -369,6 +426,10 @@ class PicoGUI(tk.Tk):
     def on_mode_changed(self, pin: int):
         mode = PinMode(self.pin_mode_var[pin].get())
         self.set_pin_mode(pin, mode)
+
+        #print(f"\tsend: Set GP{pin} mode to {mode.value}")
+        self.send_pin_parameter(pin, "mode", mode.value)
+
         self.refresh_function_boxes()
 
 
@@ -395,104 +456,7 @@ class PicoGUI(tk.Tk):
         self.pins[pin].mode = mode
         self.pin_mode_var[pin].set(mode.value)
 
-        
-        #self.handle_DOUT_change(pin, self.pins[pin].state, mode)
-        #self.handle_DIN_change(pin, self.pins[pin].din, mode)
-        
     
-    def handle_DOUT_change(self, pin: int, state: int, mode: PinMode):
-        # enable/disable toggle button based on mode
-        if mode == PinMode.DOUT:
-            #self.pin_dout_btn[pin].config(state="normal")
-            # add an on/off button to the row
-            if pin not in self.pin_dout_btn:
-                row = self.left_scroll.content.winfo_children()[pin]
-                btn = tk.Button(
-                    row,
-                    text="OFF",
-                    relief="raised",
-                    command=lambda p=pin: self.toggle_pin(p),
-                    bg="#333333",
-                    fg="white",
-                    activebackground="#444444",
-                    activeforeground="white",
-                )
-                btn.pack(side="left", expand=True, fill="x")
-                self.pin_dout_btn[pin] = btn
-                self.pins[pin].state = 0
-                self._render_toggle(pin)
-            else:
-                self.pin_dout_btn[pin].config(state="normal")
-
-        else:
-            # remove the on/off button if it exists
-            if pin in self.pin_dout_btn:
-                self.pin_dout_btn[pin].destroy()
-                del self.pin_dout_btn[pin]
-
-    def handle_DIN_change(self, pin: int, din: int, mode: PinMode):
-        if mode == PinMode.DIN:
-            if pin not in self.pin_din_indicator:
-                # add a color indicator for DIN
-                row = self.left_scroll.content.winfo_children()[pin]
-                label = tk.Label(
-                    row,
-                    bg="#333333" if self.pins[pin].din == 0 else "#00aa00",
-                )
-                label.pack(side="left", expand=True, fill="x")
-                self.pin_din_indicator[pin] = label
-
-                # add a dropdown for pull-up/down/none
-                pud = ttk.OptionMenu(
-                    row,
-                    tk.StringVar(value="None"),
-                    "None",
-                    *["None", "Pull-Up", "Pull-Down"],
-                    command=lambda _val, p=pin: self.on_pud_changed(p)
-                )
-                pud.config(width=8)
-                pud.pack(side="left", padx=(6, 0))
-                self.pin_din_pud_menu[pin] = pud
-
-        else:
-            # remove the DIN indicator if it exists
-            #row = self.left_scroll.content.winfo_children()[pin]
-            if pin in self.pin_din_indicator:
-                self.pin_din_indicator[pin].destroy()
-                del self.pin_din_indicator[pin]
-            if pin in self.pin_din_pud_menu:
-                self.pin_din_pud_menu[pin].destroy()
-                del self.pin_din_pud_menu[pin]
-
-        
-
-    def _render_readout(self, pin: int):
-        p = self.pins[pin]
-        if p.mode == PinMode.DOUT:
-            self.pin_value_var[pin].set("HIGH" if p.state else "LOW")
-        elif p.mode == PinMode.DIN:
-            self.pin_value_var[pin].set("HIGH" if p.din else "LOW")
-        elif p.mode == PinMode.ADC:
-            self.pin_value_var[pin].set(f"{p.adc_v:.3f} V")
-        else:
-            self.pin_value_var[pin].set("—")
-
-    def update_gpio_readout(self, pin: int, din: int | None = None, adc_v: float | None = None):
-        """Call this from your polling loop when you read the Pico."""
-        if din is not None:
-            self.pins[pin].din = 1 if din else 0
-        if adc_v is not None:
-            self.pins[pin].adc_v = float(adc_v)
-        #self._render_readout(pin)
-    
-    def update_din(self, pin: int, din: int):
-        """Update the DIN value and refresh the indicator."""
-        self.pins[pin].din = 1 if din else 0
-        if pin in self.pin_din_indicator:
-            self.pin_din_indicator[pin].config(
-                bg="#333333" if self.pins[pin].din == 0 else "#00aa00"
-            )
-
     # ---------- right pane: function boxes ----------
 
     def refresh_function_boxes(self):
@@ -504,6 +468,7 @@ class PicoGUI(tk.Tk):
         groups = {
             "DOUT": [p.num for p in self.pins.values() if p.mode == PinMode.DOUT],
             "DIN": [p.num for p in self.pins.values() if p.mode == PinMode.DIN],
+            "ADC": [p.num for p in self.pins.values() if p.mode == PinMode.ADC],
             "PWM": [p.num for p in self.pins.values() if p.mode == PinMode.PWM],
             "SPI0": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI0, PinMode.MISO0, PinMode.SCK0)],
             "SPI1": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI1, PinMode.MISO1, PinMode.SCK1)],
@@ -513,15 +478,16 @@ class PicoGUI(tk.Tk):
             "UART1": [p.num for p in self.pins.values() if p.mode in (PinMode.TX1, PinMode.RX1)],
         }
 
-        #for title in FUNCTIONS:
-        #    pins = sorted(groups[title])
-        #    self._add_function_box(self.fn_container, title, pins)
+        self.update_COM()
+
         self.update_DOUT(sorted(groups["DOUT"]))
         self.update_DIN(sorted(groups["DIN"]))
+        self.update_ADC(sorted(groups["ADC"]))
         self.update_PWM(sorted(groups["PWM"]))
         self.update_SPI(groups["SPI0"], groups["SPI1"])
         self.update_I2C(groups["I2C0"], groups["I2C1"]) 
-        self.update_UART(groups["UART0"], groups["UART1"])
+        self.update_UART(groups["UART0"], groups["UART1"]) 
+        
 
     def update_DOUT(self, pins: list[int]):
         box = ttk.LabelFrame(self.fn_container, text="DOUT", padding=8)
@@ -559,6 +525,9 @@ class PicoGUI(tk.Tk):
             return
 
         self.pins[pin].state ^= 1
+
+        #print(f"\tsend: Set GP{pin} DOUT to {self.pins[pin].state}")
+        self.send_pin_parameter(pin, "dout", self.pins[pin].state)
 
         is_on = self.pins[pin].state == 1
         if is_on:
@@ -616,7 +585,34 @@ class PicoGUI(tk.Tk):
                 self.pin_din_pud_var[pin].set(pud_value)
             except Exception:
                 pass
-        print(f"Pin {pin} PUD changed to {self.pins[pin].pud}")
+        #print(f"\tsend GP{pin} PUD changed to {self.pins[pin].pud}")
+        self.send_pin_parameter(pin, "pud", self.pins[pin].pud)
+
+    def update_ADC(self, pins: list[int]):
+        box = ttk.LabelFrame(self.fn_container, text="ADC", padding=8)
+        box.pack(fill="x", pady=8)
+
+        if not pins:
+            ttk.Label(box, text="No pins assigned.").pack(anchor="w")
+            return
+
+        for pin in pins:
+            row = ttk.Frame(box)
+            row.pack(fill="x", pady=2)
+
+            # Display alias truncated to 8 chars and padded so it doesn't push controls
+            display_alias = (self.pins[pin].alias[:10]).ljust(10)
+            ttk.Label(row, text=f"GP{pin}  -  {display_alias}", width=20, anchor="w").pack(side="left", padx=(16, 0))
+            
+            adc_v = (self.pins[pin].adc_count / 65535.0) * 3.3
+            ttk.Label(row, text=f"{self.pins[pin].adc_count}", width=15).pack(side="left", padx=(2, 0))
+            ttk.Label(row, text=f"{adc_v:.3f} V", width=15).pack(side="left", padx=(2, 0))
+    
+    def set_ADC_value(self, pin: int, counts: int):
+        #if self.pins[pin].mode != PinMode.ADC:
+        #    return
+        self.pins[pin].adc_count = counts
+        print(f"Pin {pin} ADC counts set to {counts}")
 
     def on_spi0_mosi_selected(self, val: str):
         """Handle MOSI selection: store which MOSI pin is active. Does not change pin modes.
@@ -635,7 +631,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("SPI0 MOSI selection cleared")
+            print("\tsend SPI0 MOSI pin removed")
             return
 
         pin_str = str(val)
@@ -659,7 +655,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"SPI0 MOSI selected: GP{pin}")
+            print(f"\tsend: SPI0 MOSI selected: GP{pin}")
         else:
             # invalid selection (shouldn't happen with filtered options) - clear
             self.spi0_mosi_selected = None
@@ -685,7 +681,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("SPI0 MISO selection cleared")
+            print("\tsend: SPI0 MISO selection cleared")
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -706,7 +702,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"SPI0 MISO selected: GP{pin}")
+            print(f"\tsend: SPI0 MISO selected: GP{pin}")
         else:
             self.spi0_miso_selected = None
             self.spi0_config['miso'] = None
@@ -731,7 +727,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("SPI0 SCK selection cleared")
+            print("\tsend: SPI0 SCK selection cleared")
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -752,7 +748,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"SPI0 SCK selected: GP{pin}")
+            print(f"\tsend: SPI0 SCK selected: GP{pin}")
         else:
             self.spi0_sck_selected = None
             self.spi0_config['sck'] = None
@@ -773,7 +769,7 @@ class PicoGUI(tk.Tk):
                     self.spi0_csn_var.set(PinMode.UNUSED.value)
                 except Exception:
                     pass
-            print("SPI0 CSn selection cleared")
+            print("\tsend: SPI0 CSn selection cleared")
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -791,7 +787,7 @@ class PicoGUI(tk.Tk):
                     self.spi0_csn_var.set(f"GP{pin}")
                 except Exception:
                     pass
-            print(f"SPI0 CSn set to pin {pin}")
+            print(f"\tsend: SPI0 CSn set to pin {pin}")
         else:
             self.spi0_csn = None
             self.spi0_config['csn'] = None
@@ -832,7 +828,7 @@ class PicoGUI(tk.Tk):
             self.pin_pwm_duty_var[pin] = duty_var
 
             freq_entry.bind("<Return>", lambda e, p=pin: self.update_pwm_freq(p, float(freq_var.get())))
-            freq_entry.bind("<FocusOut>", lambda e, p=pin: self.update_pwm_freq(p, float(freq_var.get())))
+            #freq_entry.bind("<FocusOut>", lambda e, p=pin: self.update_pwm_freq(p, float(freq_var.get())))
 
             duty_entry.bind("<Return>", lambda e, p=pin: self.update_pwm_duty(p, float(duty_var.get())))
             duty_entry.bind("<FocusOut>", lambda e, p=pin: self.update_pwm_duty(p, float(duty_var.get())))
@@ -868,8 +864,17 @@ class PicoGUI(tk.Tk):
             self.pin_slider_label[pin] = value_label
 
     def update_pwm_freq(self, pin: int, freq: float):
+        # Enforce a minimum frequency: 50 Hz for servo mode, otherwise 10 Hz.
+        min_freq = 10
+        if freq < min_freq:
+            freq = min_freq
+            # update the entry to reflect the clamped value
+            if pin in self.pin_pwm_freq_var:
+                self.pin_pwm_freq_var[pin].set(freq)
+
         self.pins[pin].pwm_freq = freq
-        print(f"Pin {pin} PWM frequency set to {freq} Hz")
+        #print(f"\tsend: GP{pin} PWM frequency set to {freq} Hz")
+        self.send_pin_parameter(pin, "pwm_freq", freq)
     
     def update_pwm_duty(self, pin: int, duty: float):
         # If servo mode is enabled, clamp duty to servo-safe range (5-10%)
@@ -891,7 +896,7 @@ class PicoGUI(tk.Tk):
                     self.pin_pwm_duty_var[pin].set(round(clamped, 2))
                 except Exception:
                     pass
-            print(f"Pin {pin} Servo angle set to {angle:.1f} degrees (duty: {clamped:.2f}%)")
+            #print(f"Pin {pin} Servo angle set to {angle:.1f} degrees (duty: {clamped:.2f}%)")
         else:
             self.pins[pin].pwm_duty = duty
             if pin in self.pin_slider_widget:
@@ -901,7 +906,8 @@ class PicoGUI(tk.Tk):
                     pass
             if pin in self.pin_slider_label:
                 self.pin_slider_label[pin].config(text=f"{duty:.1f}%")
-        print(f"Pin {pin} PWM duty cycle set to {self.pins[pin].pwm_duty:.1f} %")
+        #print(f"\tsend: GP{pin} PWM duty cycle set to {self.pins[pin].pwm_duty:.1f} %")
+        #self.send_pin_parameter(pin, "pwm_duty", round(self.pins[pin].pwm_duty,2))
     
     def update_servo_mode(self, pin: int, enabled: bool):
         # store per-pin servo mode
@@ -915,6 +921,7 @@ class PicoGUI(tk.Tk):
 
         if enabled:
             self.pins[pin].pwm_freq = 50.0  # typical servo frequency
+            self.send_pin_parameter(pin, "pwm_freq", 50)
             self.pins[pin].pwm_duty = 7.5   # neutral position
             if pin in self.pin_pwm_freq_var:
                 self.pin_pwm_freq_var[pin].set(50.0)
@@ -961,7 +968,8 @@ class PicoGUI(tk.Tk):
                     self.pin_pwm_duty_var[pin].set(round(value,2))
                 except Exception:
                     pass
-            print(f"Pin {pin} PWM duty cycle set to {value:.1f}%")
+            #print(f"Pin {pin} PWM duty cycle set to {value:.1f}%")
+        self.send_pin_parameter(pin, "pwm_duty", round(self.pins[pin].pwm_duty,2))
     
     def update_SPI(self, spi0_pins: list[int], spi1_pins: list[int]):
         
@@ -1600,6 +1608,242 @@ class PicoGUI(tk.Tk):
 
             uart1_receive_entry = tk.Entry(row2, width=40, textvariable=self.uart1_receive_var, state="readonly")
             uart1_receive_entry.pack(side="left", padx=(4, 0))
+
+    def update_COM(self):
+        """Display COM port selection dropdown and Refresh button."""
+        box = ttk.LabelFrame(self.fn_container, text="Connection", padding=8)
+        box.pack(fill="x", pady=8)
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=2)
+
+        ttk.Label(row, text="COM Port:", anchor="w").pack(side="left", padx=(8, 8))
+
+        # try to enumerate system ports (requires pyserial). Fall back to empty list if not available.
+        ports = []
+        try:
+            ports = [p.device for p in list_ports.comports()]
+        except Exception:
+            ports = []
+
+        options = ["None"] + ports if ports else ["None"]
+
+        current_sel = "None"
+        if getattr(self, 'com_port_selected', None) is not None:
+            if self.com_port_selected in options:
+                current_sel = self.com_port_selected
+            else:
+                self.com_port_selected = None
+
+        if not hasattr(self, 'com_port_var'):
+            self.com_port_var = tk.StringVar(value=current_sel)
+        else:
+            try:
+                self.com_port_var.set(current_sel)
+            except Exception:
+                pass
+
+        # Destroy any existing widgets that were parented to old frames to avoid "bad window path name" errors
+        if hasattr(self, 'com_port_menu'):
+            try:
+                self.com_port_menu.destroy()
+            except Exception:
+                pass
+
+        self.com_port_menu = ttk.OptionMenu(row, self.com_port_var, self.com_port_var.get(), *options, command=lambda v: self.on_com_selected(v))
+        self.com_port_menu.config(width=20)
+        self.com_port_menu.pack(side="left", padx=(6, 6))
+
+        ttk.Button(row, text="Refresh", command=self.refresh_com_ports).pack(side="left", padx=(8, 0))
+
+        # Baud entry for opening serial ports
+        ttk.Label(row, text="Baud:").pack(side="left", padx=(8, 0))
+        baud_entry = tk.Entry(row, width=8, textvariable=self.com_baud_var)
+        baud_entry.pack(side="left", padx=(2, 0))
+
+        # Open/Close button: always recreate to avoid reparenting a destroyed widget
+        if hasattr(self, 'com_open_btn'):
+            try:
+                self.com_open_btn.destroy()
+            except Exception:
+                pass
+        self.com_open_btn = ttk.Button(row, text=("Close" if self.ser else "Open"), command=self.on_com_open_toggle)
+        self.com_open_btn.pack(side="left", padx=(8, 0))
+
+        # Status label with background color (use tk.Label so bg shows). Recreate each refresh.
+        if hasattr(self, 'com_status_label'):
+            try:
+                self.com_status_label.destroy()
+            except Exception:
+                pass
+        status_bg = "#aaddaa" if self.ser else "#dddddd"
+        if not hasattr(self, 'com_port_label_var'):
+            self.com_port_label_var = tk.StringVar(value=self.com_port_selected or "")
+        self.com_status_label = tk.Label(row, textvariable=self.com_port_label_var, bg=status_bg, width=24, anchor="w")
+        self.com_status_label.pack(side="left", padx=(8, 0))
+
+    def refresh_com_ports(self):
+        try:
+            ports = [p.device for p in list_ports.comports()]
+        except Exception:
+            ports = []
+        opts = ["None"] + ports if ports else ["None"]
+        if hasattr(self, 'com_port_menu'):
+            try:
+                menu = self.com_port_menu["menu"]
+                menu.delete(0, 'end')
+                for p in opts:
+                    menu.add_command(label=p, command=lambda v=p: self.on_com_selected(v))
+            except Exception:
+                pass
+        # pick a sensible current selection
+        if getattr(self, 'com_port_selected', None) and self.com_port_selected in ports:
+            sel = self.com_port_selected
+        else:
+            sel = ports[0] if ports else "None"
+            self.com_port_selected = None if sel == "None" else sel
+        try:
+            self.com_port_var.set(sel)
+        except Exception:
+            pass
+        # update status label and color
+        if hasattr(self, 'com_port_label_var'):
+            try:
+                self.com_port_label_var.set(self.com_port_selected or "")
+            except Exception:
+                pass
+        if hasattr(self, 'com_status_label'):
+            try:
+                bg = "#aaddaa" if self.ser else "#dddddd"
+                self.com_status_label.config(bg=bg)
+            except Exception:
+                pass
+        print(f"COM ports refreshed: {opts}")
+
+    def set_com_status(self, text: str, color: str = "#dddddd"):
+        try:
+            if hasattr(self, 'com_port_label_var'):
+                self.com_port_label_var.set(text)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'com_status_label'):
+                self.com_status_label.config(bg=color)
+        except Exception:
+            pass
+
+    def on_com_selected(self, val: str):
+        if val == "None":
+            self.com_port_selected = None
+            try:
+                self.com_port_var.set("None")
+            except Exception:
+                pass
+            print("COM port cleared")
+        else:
+            self.com_port_selected = str(val)
+            try:
+                self.com_port_var.set(self.com_port_selected)
+            except Exception:
+                pass
+            print(f"COM port selected: {self.com_port_selected}")
+        # update status label text but reset color
+        try:
+            self.set_com_status(self.com_port_selected or "", "#dddddd")
+        except Exception:
+            pass
+
+    def on_com_open_toggle(self):
+        """Open or close the selected COM port (stores instance in self.ser)."""
+        # If already open, close it
+        if getattr(self, 'ser', None) is not None:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            try:
+                if hasattr(self, 'com_open_btn'):
+                    self.com_open_btn.config(text="Open")
+            except Exception:
+                pass
+            self.set_com_status("Closed", "#dddddd")
+            print("COM port closed")
+            return
+
+        # Not open: try to open
+        if not getattr(self, 'com_port_selected', None):
+            self.set_com_status("No port", "#ffcccc")
+            print("No COM port selected to open")
+            return
+
+        if serial is None:
+            self.set_com_status("pyserial missing", "#ffcccc")
+            print("pyserial module not available; cannot open COM ports")
+            return
+
+        try:
+            baud = int(self.com_baud_var.get())
+        except Exception:
+            baud = 115200
+        # attempt open
+        try:
+            self.set_com_status("Opening...", "#ffffaa")
+            ser = serial.Serial(self.com_port_selected, baudrate=baud, timeout=0.1)
+            self.ser = ser
+            self.start_serial_poll()
+            try:
+                if hasattr(self, 'com_open_btn'):
+                    self.com_open_btn.config(text="Close")
+            except Exception:
+                pass
+            self.set_com_status(f"Opened {self.com_port_selected}", "#aaddaa")
+            print(f"Opened COM port {self.com_port_selected} at {baud} bps")
+        except Exception as e:
+            self.set_com_status(f"Error", "#ffaaaa")
+            print(f"Failed to open {self.com_port_selected}: {e}")
+
+    def request_refresh_function_boxes(self):
+        """Throttle refreshes to at most 20Hz. If called more frequently, a single
+        pending refresh is scheduled to run after the remaining wait time."""
+        now = time.time()
+        elapsed = now - getattr(self, '_last_refresh_time', 0.0)
+        if elapsed >= getattr(self, '_min_refresh_interval', 0.05):
+            # do immediate refresh
+            try:
+                # cancel any pending scheduled refresh
+                if getattr(self, '_refresh_pending_id', None) is not None:
+                    try:
+                        self.after_cancel(self._refresh_pending_id)
+                    except Exception:
+                        pass
+                    self._refresh_pending_id = None
+            except Exception:
+                pass
+            # call the original implementation (from the class) to avoid recursion
+            try:
+                type(self).refresh_function_boxes(self)
+            finally:
+                self._last_refresh_time = time.time()
+        else:
+            # schedule a single refresh after the remaining interval if not already scheduled
+            rem = getattr(self, '_min_refresh_interval', 0.05) - elapsed
+            if getattr(self, '_refresh_pending_id', None) is None:
+                try:
+                    delay_ms = max(1, int(rem * 1000))
+                    self._refresh_pending_id = self.after(delay_ms, self._scheduled_refresh_callback)
+                except Exception:
+                    pass
+
+    def _scheduled_refresh_callback(self):
+        try:
+            self._refresh_pending_id = None
+        except Exception:
+            pass
+        try:
+            type(self).refresh_function_boxes(self)
+        finally:
+            self._last_refresh_time = time.time()
 
     def on_i2c0_sda_selected(self, val: str):
         """Select SDA pin for I2C0 (only pins currently in SDA0 appear in menu)."""
@@ -2390,7 +2634,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("SPI1 MOSI selection cleared")
+            print("\tsend: SPI1 MOSI selection cleared")
             try:
                 spi1.mosi_pin = None
             except Exception:
@@ -2415,7 +2659,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"SPI1 MOSI selected: GP{pin}")
+            print(f"\tsend: SPI1 MOSI selected: GP{pin}")
             try:
                 spi1.mosi_pin = pin
             except Exception:
@@ -2447,7 +2691,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("SPI1 MISO selection cleared")
+            print("\tsend: SPI1 MISO selection cleared")
             try:
                 spi1.miso_pin = None
             except Exception:
@@ -2472,7 +2716,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"SPI1 MISO selected: GP{pin}")
+            print(f"\tsend: SPI1 MISO selected: GP{pin}")
             try:
                 spi1.miso_pin = pin
             except Exception:
@@ -2504,7 +2748,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("SPI1 SCK selection cleared")
+            print("\tsend: SPI1 SCK selection cleared")
             try:
                 spi1.sck_pin = None
             except Exception:
@@ -2529,7 +2773,7 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"SPI1 SCK selected: GP{pin}")
+            print(f"\tsend: SPI1 SCK selected: GP{pin}")
             try:
                 spi1.sck_pin = pin
             except Exception:
@@ -2542,7 +2786,7 @@ class PicoGUI(tk.Tk):
                     self.spi1_sck_var.set(PinMode.UNUSED.value)
                 except Exception:
                     pass
-            print(f"SPI1 SCK selection invalid for {val}")
+            print(f"\tsend: SPI1 SCK selection invalid for {val}")
             try:
                 spi1.sck_pin = None
             except Exception:
@@ -2557,7 +2801,7 @@ class PicoGUI(tk.Tk):
                     self.spi1_csn_var.set(PinMode.UNUSED.value)
                 except Exception:
                     pass
-            print("SPI1 CSn selection cleared")
+            print("\tsend: SPI1 CSn selection cleared")
             try:
                 spi1.csn_pin = None
             except Exception:
@@ -2578,7 +2822,7 @@ class PicoGUI(tk.Tk):
                     self.spi1_csn_var.set(f"GP{pin}")
                 except Exception:
                     pass
-            print(f"SPI1 CSn set to pin {pin}")
+            print(f"\tsend: SPI1 CSn set to pin {pin}")
             try:
                 spi1.csn_pin = pin
             except Exception:
@@ -2607,7 +2851,7 @@ class PicoGUI(tk.Tk):
             except Exception:
                 pass
             return
-        print(f"SPI1 send: {text}")
+        print(f"\tsend: SPI1 send: {text}")
         bytes_list = []
         for part in text.split():
             try:
@@ -2643,7 +2887,7 @@ class PicoGUI(tk.Tk):
         except Exception:
             pass
         self.spi1_config['kbps'] = kbps
-        print(f"SPI1 speed set to {kbps} kbps")
+        print(f"\tsend: SPI1 speed set to {kbps} kbps")
 
     def on_spi1_receive_bytes(self):
         rx = getattr(spi1, 'received_bytes', None)
@@ -2662,7 +2906,7 @@ class PicoGUI(tk.Tk):
 
     def update_spi0_speed(self, kbps: int):
         spi0.kilobits_per_second = kbps
-        print(f"SPI0 speed set to {kbps} kbps")
+        print(f"\tsend: SPI0 speed set to {kbps} kbps")
 
 
 
