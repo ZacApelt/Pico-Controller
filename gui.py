@@ -55,6 +55,9 @@ class SPI0:
     miso_pin: int | None = None
     sck_pin: int | None = None
     csn_pin: int | None = None
+    kilobits_per_second: int = 1000
+    bytes_to_send: bytes = b""
+    received_bytes: bytes = b""
 spi0 = SPI0()
 
 class SPI1:
@@ -62,6 +65,9 @@ class SPI1:
     miso_pin: int | None = None
     sck_pin: int | None = None
     csn_pin: int | None = None
+    kilobits_per_second: int = 1000
+    bytes_to_send = []
+    received_bytes: bytes = b""
 spi1 = SPI1()
 
 
@@ -236,7 +242,7 @@ class PicoGUI(tk.Tk):
         self.spi0_miso_selected = None
         self.spi0_sck_selected = None
         self.spi0_csn = None
-        self.spi0_config = {"mosi": None, "miso": None, "sck": None, "csn": None}
+        self.spi0_config = {"mosi": None, "miso": None, "sck": None, "csn": None, "kbps": 1000, "received_bytes": None, "bytes_to_send": []}
 
         self._build_layout()
         self.refresh_function_boxes()
@@ -1006,6 +1012,54 @@ class PicoGUI(tk.Tk):
             csn_menu.config(width=6)
             csn_menu.pack(side="left", padx=(6, 6))
 
+            kbps_var = tk.StringVar(value=spi0.kilobits_per_second)
+            ttk.Label(row, text="kbps:").pack(side="left", padx=(2, 0))
+            kbps_entry = tk.Entry(row, width=6, textvariable=kbps_var)
+            kbps_entry.pack(side="left", padx=(2, 0))
+
+            kbps_entry.bind("<Return>", lambda e: self.update_spi0_speed(float(kbps_var.get())))
+            kbps_entry.bind("<FocusOut>", lambda e: self.update_spi0_speed(float(kbps_var.get())))
+
+            # Send entry on its own line below other SPI0 controls
+            row2 = ttk.Frame(spi0_box)
+            row2.pack(fill="x", pady=(6, 0))
+            ttk.Label(row2, text="Send Hex:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            # initialize or reuse StringVar so value persists across UI refreshes
+            saved_send = self.spi0_config.get('send_hex', '')
+            if hasattr(self, 'spi0_send_var'):
+                # keep existing var but update its value to saved one if present
+                try:
+                    if saved_send is not None:
+                        self.spi0_send_var.set(saved_send)
+                except Exception:
+                    pass
+            else:
+                self.spi0_send_var = tk.StringVar(value=saved_send if saved_send is not None else "")
+
+            spi0_send_entry = tk.Entry(row2, width=20, textvariable=self.spi0_send_var)
+            spi0_send_entry.pack(side="left", padx=(4, 0))
+            spi0_send_entry.bind("<Return>", lambda e: self.on_spi0_send(self.spi0_send_var.get()))
+
+            ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
+            # text field to show the hex of received bytes
+            saved_recv = None
+            if self.spi0_config.get('received_bytes'):
+                saved_recv = ' '.join(f"{b:02X}" for b in self.spi0_config['received_bytes'])
+
+            if hasattr(self, 'spi0_receive_var'):
+                try:
+                    if saved_recv is not None:
+                        self.spi0_receive_var.set(saved_recv)
+                except Exception:
+                    pass
+            else:
+                self.spi0_receive_var = tk.StringVar(value=saved_recv if saved_recv is not None else "")
+
+            spi0_receive_entry = tk.Entry(row2, width=50, textvariable=self.spi0_receive_var, state="readonly")
+            spi0_receive_entry.pack(side="left", padx=(4, 0))
+
+
         # create a sub-box for SPI1
         if spi1_pins:
             spi1_box = ttk.LabelFrame(box, text="SPI1", padding=8)
@@ -1017,7 +1071,77 @@ class PicoGUI(tk.Tk):
 
                 ttk.Label(row, text=f"MOSI", width=20, anchor="w").pack(side="left", padx=(16, 0))
 
-            
+    def on_spi0_send(self, text: str):
+        """Handle pressing Enter in the SPI0 Send entry (stores the hex string and bytes)."""
+        text = str(text).strip()
+        # persist the entered hex text so it survives UI refreshes
+        self.spi0_config['send_hex'] = text
+
+        if not text:
+            # also clear bytes_to_send
+            self.spi0_config['bytes_to_send'] = []
+            spi0.bytes_to_send = []
+            return
+
+        print(f"SPI0 send: {text}")
+        bytes_list = []
+        # text expected as space-separated hex bytes like "80 F1 2A" or "80F1 2A"
+        for part in text.split():
+            try:
+                byte = int(part, 16)
+                if 0 <= byte <= 255:
+                    bytes_list.append(byte)
+            except Exception:
+                pass
+        # store both in local config and (if available) the spi0 object
+        self.spi0_config['bytes_to_send'] = bytes_list
+        try:
+            spi0.bytes_to_send = bytes_list
+        except Exception:
+            pass
+
+        # debug-only response generation (if spi0 is present): invert bits
+        try:
+            spi0.received_bytes = [b ^ 0xFF for b in bytes_list]
+        except Exception:
+            pass
+
+        # update stored received bytes and update UI
+        if hasattr(self, 'spi0_receive_var'):
+            try:
+                hex_str = ' '.join(f"{b:02X}" for b in (getattr(spi0, 'received_bytes', []) or self.spi0_config.get('received_bytes') or []))
+                self.spi0_receive_var.set(hex_str)
+            except Exception:
+                pass
+        # persist received bytes in config
+        try:
+            self.spi0_config['received_bytes'] = list(getattr(spi0, 'received_bytes', self.spi0_config.get('received_bytes') or []))
+        except Exception:
+            pass
+
+    def update_spi0_speed(self, kbps: int):
+        spi0.kilobits_per_second = kbps
+        print(f"SPI0 speed set to {kbps} kbps")
+
+    
+    def on_spi0_receive_bytes(self):
+        """Update the SPI0 received bytes display from the spi0.received_bytes and persist."""
+        rx = getattr(spi0, 'received_bytes', None)
+        if rx is None:
+            # nothing to show
+            return
+        hex_str = ' '.join(f"{b:02X}" for b in rx)
+        # persist in config
+        try:
+            self.spi0_config['received_bytes'] = list(rx)
+        except Exception:
+            pass
+        if hasattr(self, "spi0_receive_var"):
+            try:
+                self.spi0_receive_var.set(hex_str)
+            except Exception:
+                pass
+        
 
 if __name__ == "__main__":
     app = PicoGUI()
