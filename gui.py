@@ -50,7 +50,7 @@ class Pin:
     pwm_freq: float = 1000.0  # Hz
     pwm_duty: float = 0.0  # percentage 0-100
 
-class SPI0:
+class SPI:
     mosi_pin: int | None = None
     miso_pin: int | None = None
     sck_pin: int | None = None
@@ -58,18 +58,20 @@ class SPI0:
     kilobits_per_second: int = 1000
     bytes_to_send: bytes = b""
     received_bytes: bytes = b""
-spi0 = SPI0()
 
-class SPI1:
-    mosi_pin: int | None = None
-    miso_pin: int | None = None
-    sck_pin: int | None = None
-    csn_pin: int | None = None
-    kilobits_per_second: int = 1000
-    bytes_to_send = []
+spi0 = SPI()
+spi1 = SPI()
+
+class I2C:
+    sda_pin: int | None = None
+    scl_pin: int | None = None
+    frequency_khz: int = 100
+    bytes_to_send: list = []
     received_bytes: bytes = b""
-spi1 = SPI1()
 
+
+i2c0 = I2C()
+i2c1 = I2C()
 
 #GPIO = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 27, 28]
 FUNCTIONS = ["DOUT", "DIN", "PWM", "SPI", "I2C", "UART"]
@@ -250,6 +252,17 @@ class PicoGUI(tk.Tk):
         self.spi1_sck_selected = None
         self.spi1_csn = None
         self.spi1_config = {"mosi": None, "miso": None, "sck": None, "csn": None, "kbps": 1000, "send_hex": None, "received_bytes": None, "bytes_to_send": []}
+
+        # I2C selections and config (I2C0 and I2C1)
+        self.i2c0_sda_selected = None
+        self.i2c0_scl_selected = None
+        self.i2c0_config = {"sda": None, "scl": None, "khz": 100, "address": None, "send_hex": None, "received_bytes": None, "bytes_to_send": []}
+        self.i2c0_scan_var = tk.StringVar(value="")
+
+        self.i2c1_sda_selected = None
+        self.i2c1_scl_selected = None
+        self.i2c1_config = {"sda": None, "scl": None, "khz": 100, "address": None, "send_hex": None, "received_bytes": None, "bytes_to_send": []}
+        self.i2c1_scan_var = tk.StringVar(value="")
 
         self._build_layout()
         self.refresh_function_boxes()
@@ -475,7 +488,8 @@ class PicoGUI(tk.Tk):
             "PWM": [p.num for p in self.pins.values() if p.mode == PinMode.PWM],
             "SPI0": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI0, PinMode.MISO0, PinMode.SCK0)],
             "SPI1": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI1, PinMode.MISO1, PinMode.SCK1)],
-            "I2C": [], #[p.num for p in self.pins.values() if p.mode == PinMode.I2C],
+            "I2C0": [p.num for p in self.pins.values() if p.mode in (PinMode.SDA0, PinMode.SCL0)],
+            "I2C1": [p.num for p in self.pins.values() if p.mode in (PinMode.SDA1, PinMode.SCL1)],
             "UART": [], #[p.num for p in self.pins.values() if p.mode == PinMode.UART],
         }
 
@@ -486,6 +500,7 @@ class PicoGUI(tk.Tk):
         self.update_DIN(sorted(groups["DIN"]))
         self.update_PWM(sorted(groups["PWM"]))
         self.update_SPI(groups["SPI0"], groups["SPI1"])
+        self.update_I2C(groups["I2C0"], groups["I2C1"]) 
 
 
     def update_DOUT(self, pins: list[int]):
@@ -1020,7 +1035,7 @@ class PicoGUI(tk.Tk):
             csn_menu.pack(side="left", padx=(6, 6))
 
             kbps_var = tk.StringVar(value=spi0.kilobits_per_second)
-            ttk.Label(row, text="kbps:").pack(side="left", padx=(2, 0))
+            ttk.Label(row, text="baud:").pack(side="left", padx=(2, 0))
             kbps_entry = tk.Entry(row, width=6, textvariable=kbps_var)
             kbps_entry.pack(side="left", padx=(2, 0))
 
@@ -1141,7 +1156,7 @@ class PicoGUI(tk.Tk):
             csn1_menu.pack(side="left", padx=(6, 6))
 
             kbps1_var = tk.StringVar(value=getattr(spi1, 'kilobits_per_second', self.spi1_config.get('kbps', 1000)))
-            ttk.Label(row, text="kbps:").pack(side="left", padx=(2, 0))
+            ttk.Label(row, text="baud:").pack(side="left", padx=(2, 0))
             kbps1_entry = tk.Entry(row, width=6, textvariable=kbps1_var)
             kbps1_entry.pack(side="left", padx=(2, 0))
 
@@ -1186,6 +1201,607 @@ class PicoGUI(tk.Tk):
 
             spi1_receive_entry = tk.Entry(row2, width=50, textvariable=self.spi1_receive_var, state="readonly")
             spi1_receive_entry.pack(side="left", padx=(4, 0))
+
+    def update_I2C(self, i2c0_pins: list[int], i2c1_pins: list[int]):
+        box = ttk.LabelFrame(self.fn_container, text="I2C", padding=8)
+        box.pack(fill="x", pady=8)
+
+        if not i2c0_pins and not i2c1_pins:
+            ttk.Label(box, text="No pins assigned.").pack(anchor="w")
+            return
+
+        # I2C0
+        if i2c0_pins:
+            i2c0_box = ttk.LabelFrame(box, text="I2C0", padding=8)
+            i2c0_box.pack(fill="x", pady=4)
+
+            row = ttk.Frame(i2c0_box)
+            row.pack(fill="x", pady=2)
+
+            ttk.Label(row, text="SDA:", anchor="w").pack(side="left", padx=(8, 8))
+            sda0_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in i2c0_pins if self.pins[p].mode == PinMode.SDA0]
+            sda0_sel = PinMode.UNUSED.value
+            if hasattr(self, 'i2c0_sda_selected') and self.i2c0_sda_selected is not None:
+                sel_str = f"GP{self.i2c0_sda_selected}"
+                if sel_str in sda0_options:
+                    sda0_sel = sel_str
+                else:
+                    self.i2c0_sda_selected = None
+                    self.i2c0_config['sda'] = None
+            self.i2c0_sda_var = tk.StringVar(value=sda0_sel)
+            sda0_menu = ttk.OptionMenu(row, self.i2c0_sda_var, self.i2c0_sda_var.get(), *sda0_options, command=lambda _val: self.on_i2c0_sda_selected(_val))
+            sda0_menu.config(width=6)
+            sda0_menu.pack(side="left", padx=(6, 6))
+
+            ttk.Label(row, text="SCL:", anchor="w").pack(side="left", padx=(8, 8))
+            scl0_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in i2c0_pins if self.pins[p].mode == PinMode.SCL0]
+            scl0_sel = PinMode.UNUSED.value
+            if hasattr(self, 'i2c0_scl_selected') and self.i2c0_scl_selected is not None:
+                sel_str = f"GP{self.i2c0_scl_selected}"
+                if sel_str in scl0_options:
+                    scl0_sel = sel_str
+                else:
+                    self.i2c0_scl_selected = None
+                    self.i2c0_config['scl'] = None
+            self.i2c0_scl_var = tk.StringVar(value=scl0_sel)
+            scl0_menu = ttk.OptionMenu(row, self.i2c0_scl_var, self.i2c0_scl_var.get(), *scl0_options, command=lambda _val: self.on_i2c0_scl_selected(_val))
+            scl0_menu.config(width=6)
+            scl0_menu.pack(side="left", padx=(6, 6))
+
+            # frequency
+            khz0_var = tk.StringVar(value=self.i2c0_config.get('khz', 100))
+            ttk.Label(row, text="freq [kHz]:").pack(side="left", padx=(2, 0))
+            khz0_entry = tk.Entry(row, width=6, textvariable=khz0_var)
+            khz0_entry.pack(side="left", padx=(2, 0))
+            khz0_entry.bind("<Return>", lambda e: self.update_i2c0_speed(int(khz0_var.get())))
+            khz0_entry.bind("<FocusOut>", lambda e: self.update_i2c0_speed(int(khz0_var.get())))
+
+            # Scan button and label
+            scan_btn = ttk.Button(row, text="Scan", command=lambda: self.on_i2c0_scan())
+            scan_btn.pack(side="left", padx=(12, 8))
+            if not hasattr(self, 'i2c0_scan_var'):
+                self.i2c0_scan_var = tk.StringVar(value="")
+            ttk.Label(row, textvariable=self.i2c0_scan_var).pack(side="left", padx=(6,8))
+
+            # Row2: addr + send / received
+            row2 = ttk.Frame(i2c0_box)
+            row2.pack(fill="x", pady=(6, 0))
+            ttk.Label(row2, text="Addr [hex]:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            saved_addr = self.i2c0_config.get('address', '')
+            if hasattr(self, 'i2c0_addr_var'):
+                try:
+                    if saved_addr is not None:
+                        self.i2c0_addr_var.set(saved_addr)
+                except Exception:
+                    pass
+            else:
+                self.i2c0_addr_var = tk.StringVar(value=saved_addr if saved_addr is not None else "")
+
+            i2c0_addr_entry = tk.Entry(row2, width=8, textvariable=self.i2c0_addr_var)
+            i2c0_addr_entry.pack(side="left", padx=(4, 0))
+            i2c0_addr_entry.bind("<Return>", lambda e: self.on_i2c0_send(self.i2c0_addr_var.get(), self.i2c0_send_var.get()))
+
+            ttk.Label(row2, text="Send Hex:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            saved_send = self.i2c0_config.get('send_hex', '')
+            if hasattr(self, 'i2c0_send_var'):
+                try:
+                    if saved_send is not None:
+                        self.i2c0_send_var.set(saved_send)
+                except Exception:
+                    pass
+            else:
+                self.i2c0_send_var = tk.StringVar(value=saved_send if saved_send is not None else "")
+
+            i2c0_send_entry = tk.Entry(row2, width=20, textvariable=self.i2c0_send_var)
+            i2c0_send_entry.pack(side="left", padx=(4, 0))
+            i2c0_send_entry.bind("<Return>", lambda e: self.on_i2c0_send(self.i2c0_addr_var.get(), self.i2c0_send_var.get()))
+
+            ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
+            saved_recv = None
+            if self.i2c0_config.get('received_bytes'):
+                saved_recv = ' '.join(f"{b:02X}" for b in self.i2c0_config['received_bytes'])
+
+            if hasattr(self, 'i2c0_receive_var'):
+                try:
+                    if saved_recv is not None:
+                        self.i2c0_receive_var.set(saved_recv)
+                except Exception:
+                    pass
+            else:
+                self.i2c0_receive_var = tk.StringVar(value=saved_recv if saved_recv is not None else "")
+
+            i2c0_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c0_receive_var, state="readonly")
+            i2c0_receive_entry.pack(side="left", padx=(4, 0))
+
+        # I2C1 (mirror)
+        if i2c1_pins:
+            i2c1_box = ttk.LabelFrame(box, text="I2C1", padding=8)
+            i2c1_box.pack(fill="x", pady=4)
+
+            row = ttk.Frame(i2c1_box)
+            row.pack(fill="x", pady=2)
+
+            ttk.Label(row, text="SDA:", anchor="w").pack(side="left", padx=(8, 8))
+            sda1_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in i2c1_pins if self.pins[p].mode == PinMode.SDA1]
+            sda1_sel = PinMode.UNUSED.value
+            if hasattr(self, 'i2c1_sda_selected') and self.i2c1_sda_selected is not None:
+                sel_str = f"GP{self.i2c1_sda_selected}"
+                if sel_str in sda1_options:
+                    sda1_sel = sel_str
+                else:
+                    self.i2c1_sda_selected = None
+                    self.i2c1_config['sda'] = None
+            self.i2c1_sda_var = tk.StringVar(value=sda1_sel)
+            sda1_menu = ttk.OptionMenu(row, self.i2c1_sda_var, self.i2c1_sda_var.get(), *sda1_options, command=lambda _val: self.on_i2c1_sda_selected(_val))
+            sda1_menu.config(width=6)
+            sda1_menu.pack(side="left", padx=(6, 6))
+
+            ttk.Label(row, text="SCL:", anchor="w").pack(side="left", padx=(8, 8))
+            scl1_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in i2c1_pins if self.pins[p].mode == PinMode.SCL1]
+            scl1_sel = PinMode.UNUSED.value
+            if hasattr(self, 'i2c1_scl_selected') and self.i2c1_scl_selected is not None:
+                sel_str = f"GP{self.i2c1_scl_selected}"
+                if sel_str in scl1_options:
+                    scl1_sel = sel_str
+                else:
+                    self.i2c1_scl_selected = None
+                    self.i2c1_config['scl'] = None
+            self.i2c1_scl_var = tk.StringVar(value=scl1_sel)
+            scl1_menu = ttk.OptionMenu(row, self.i2c1_scl_var, self.i2c1_scl_var.get(), *scl1_options, command=lambda _val: self.on_i2c1_scl_selected(_val))
+            scl1_menu.config(width=6)
+            scl1_menu.pack(side="left", padx=(6, 6))
+
+            khz1_var = tk.StringVar(value=self.i2c1_config.get('khz', 100))
+            ttk.Label(row, text="freq [kHz]:").pack(side="left", padx=(2, 0))
+            khz1_entry = tk.Entry(row, width=6, textvariable=khz1_var)
+            khz1_entry.pack(side="left", padx=(2, 0))
+            khz1_entry.bind("<Return>", lambda e: self.update_i2c1_speed(int(khz1_var.get())))
+            khz1_entry.bind("<FocusOut>", lambda e: self.update_i2c1_speed(int(khz1_var.get())))
+
+            scan1_btn = ttk.Button(row, text="Scan", command=lambda: self.on_i2c1_scan())
+            scan1_btn.pack(side="left", padx=(12, 8))
+            if not hasattr(self, 'i2c1_scan_var'):
+                self.i2c1_scan_var = tk.StringVar(value="")
+            ttk.Label(row, textvariable=self.i2c1_scan_var).pack(side="left", padx=(6,8))
+
+            row2 = ttk.Frame(i2c1_box)
+            row2.pack(fill="x", pady=(6, 0))
+            ttk.Label(row2, text="Addr [hex]:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            saved1_addr = self.i2c1_config.get('address', '')
+            if hasattr(self, 'i2c1_addr_var'):
+                try:
+                    if saved1_addr is not None:
+                        self.i2c1_addr_var.set(saved1_addr)
+                except Exception:
+                    pass
+            else:
+                self.i2c1_addr_var = tk.StringVar(value=saved1_addr if saved1_addr is not None else "")
+
+            i2c1_addr_entry = tk.Entry(row2, width=8, textvariable=self.i2c1_addr_var)
+            i2c1_addr_entry.pack(side="left", padx=(4, 0))
+            i2c1_addr_entry.bind("<Return>", lambda e: self.on_i2c1_send(self.i2c1_addr_var.get(), self.i2c1_send_var.get()))
+
+            ttk.Label(row2, text="Send Hex:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            saved1_send = self.i2c1_config.get('send_hex', '')
+            if hasattr(self, 'i2c1_send_var'):
+                try:
+                    if saved1_send is not None:
+                        self.i2c1_send_var.set(saved1_send)
+                except Exception:
+                    pass
+            else:
+                self.i2c1_send_var = tk.StringVar(value=saved1_send if saved1_send is not None else "")
+
+            i2c1_send_entry = tk.Entry(row2, width=20, textvariable=self.i2c1_send_var)
+            i2c1_send_entry.pack(side="left", padx=(4, 0))
+            i2c1_send_entry.bind("<Return>", lambda e: self.on_i2c1_send(self.i2c1_addr_var.get(), self.i2c1_send_var.get()))
+
+            ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
+            saved1_recv = None
+            if self.i2c1_config.get('received_bytes'):
+                saved1_recv = ' '.join(f"{b:02X}" for b in self.i2c1_config['received_bytes'])
+
+            if hasattr(self, 'i2c1_receive_var'):
+                try:
+                    if saved1_recv is not None:
+                        self.i2c1_receive_var.set(saved1_recv)
+                except Exception:
+                    pass
+            else:
+                self.i2c1_receive_var = tk.StringVar(value=saved1_recv if saved1_recv is not None else "")
+
+            i2c1_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c1_receive_var, state="readonly")
+            i2c1_receive_entry.pack(side="left", padx=(4, 0))
+
+    def on_i2c0_sda_selected(self, val: str):
+        """Select SDA pin for I2C0 (only pins currently in SDA0 appear in menu)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.i2c0_sda_selected = None
+            self.i2c0_config['sda'] = None
+            if hasattr(self, "i2c0_sda_var"):
+                try:
+                    self.i2c0_sda_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c0.sda_pin = None
+            except Exception:
+                pass
+            print("I2C0 SDA selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SDA0:
+            self.i2c0_sda_selected = pin
+            self.i2c0_config['sda'] = pin
+            if hasattr(self, "i2c0_sda_var"):
+                try:
+                    self.i2c0_sda_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c0.sda_pin = pin
+            except Exception:
+                pass
+            print(f"I2C0 SDA selected: GP{pin}")
+        else:
+            self.i2c0_sda_selected = None
+            self.i2c0_config['sda'] = None
+            if hasattr(self, "i2c0_sda_var"):
+                try:
+                    self.i2c0_sda_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"I2C0 SDA selection invalid for {val}")
+
+    def on_i2c0_scl_selected(self, val: str):
+        """Select SCL pin for I2C0."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.i2c0_scl_selected = None
+            self.i2c0_config['scl'] = None
+            if hasattr(self, "i2c0_scl_var"):
+                try:
+                    self.i2c0_scl_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c0.scl_pin = None
+            except Exception:
+                pass
+            print("I2C0 SCL selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SCL0:
+            self.i2c0_scl_selected = pin
+            self.i2c0_config['scl'] = pin
+            if hasattr(self, "i2c0_scl_var"):
+                try:
+                    self.i2c0_scl_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c0.scl_pin = pin
+            except Exception:
+                pass
+            print(f"I2C0 SCL selected: GP{pin}")
+        else:
+            self.i2c0_scl_selected = None
+            self.i2c0_config['scl'] = None
+            if hasattr(self, "i2c0_scl_var"):
+                try:
+                    self.i2c0_scl_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"I2C0 SCL selection invalid for {val}")
+
+    def on_i2c0_scan(self):
+        """Simulate a simple I2C scan and show found addresses in hex."""
+        # Simple simulation: if both SDA and SCL are selected, pretend we found a couple of devices
+        found = []
+        if self.i2c0_sda_selected is not None and self.i2c0_scl_selected is not None:
+            found = [0x3C, 0x50]
+        elif self.i2c0_sda_selected is not None or self.i2c0_scl_selected is not None:
+            found = [0x50]
+        if not found:
+            txt = "No devices found"
+        else:
+            txt = 'Found: ' + ' '.join(f"0x{a:02X}" for a in found)
+        try:
+            self.i2c0_scan_var.set(txt)
+        except Exception:
+            pass
+        print(f"I2C0 scan result: {txt}")
+
+    def on_i2c0_send(self, addr_text: str, text: str):
+        """Send bytes to an I2C address (persist address and send hex)."""
+        addr_text = str(addr_text).strip()
+        text = str(text).strip()
+        # persist address and send text
+        self.i2c0_config['address'] = addr_text
+        self.i2c0_config['send_hex'] = text
+
+        if not text:
+            self.i2c0_config['bytes_to_send'] = []
+            try:
+                i2c0.bytes_to_send = []
+            except Exception:
+                pass
+            return
+
+        # parse send hex similar to SPI
+        bytes_list = []
+        for part in text.split():
+            try:
+                byte = int(part, 16)
+                if 0 <= byte <= 255:
+                    bytes_list.append(byte)
+            except Exception:
+                pass
+        self.i2c0_config['bytes_to_send'] = bytes_list
+        try:
+            i2c0.bytes_to_send = bytes_list
+        except Exception:
+            pass
+
+        # simulate response: invert bits of each byte
+        try:
+            i2c0.received_bytes = [b ^ 0xFF for b in bytes_list]
+        except Exception:
+            pass
+
+        # update recv display and persist
+        if hasattr(self, 'i2c0_receive_var'):
+            try:
+                hex_str = ' '.join(f"{b:02X}" for b in (getattr(i2c0, 'received_bytes', []) or self.i2c0_config.get('received_bytes') or []))
+                self.i2c0_receive_var.set(hex_str)
+            except Exception:
+                pass
+        try:
+            self.i2c0_config['received_bytes'] = list(getattr(i2c0, 'received_bytes', self.i2c0_config.get('received_bytes') or []))
+        except Exception:
+            pass
+        print(f"I2C0 send to {addr_text}: {text}")
+
+    def update_i2c0_speed(self, khz: int):
+        try:
+            i2c0.frequency_khz = khz
+        except Exception:
+            pass
+        self.i2c0_config['khz'] = khz
+        print(f"I2C0 frequency set to {khz} kHz")
+
+    def on_i2c0_receive_bytes(self):
+        rx = getattr(i2c0, 'received_bytes', None)
+        if rx is None:
+            return
+        hex_str = ' '.join(f"{b:02X}" for b in rx)
+        try:
+            self.i2c0_config['received_bytes'] = list(rx)
+        except Exception:
+            pass
+        if hasattr(self, "i2c0_receive_var"):
+            try:
+                self.i2c0_receive_var.set(hex_str)
+            except Exception:
+                pass
+
+    # --- I2C1 handlers (mirror I2C0) ---
+    def on_i2c1_sda_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.i2c1_sda_selected = None
+            self.i2c1_config['sda'] = None
+            if hasattr(self, "i2c1_sda_var"):
+                try:
+                    self.i2c1_sda_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c1.sda_pin = None
+            except Exception:
+                pass
+            print("I2C1 SDA selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SDA1:
+            self.i2c1_sda_selected = pin
+            self.i2c1_config['sda'] = pin
+            if hasattr(self, "i2c1_sda_var"):
+                try:
+                    self.i2c1_sda_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c1.sda_pin = pin
+            except Exception:
+                pass
+            print(f"I2C1 SDA selected: GP{pin}")
+        else:
+            self.i2c1_sda_selected = None
+            self.i2c1_config['sda'] = None
+            if hasattr(self, "i2c1_sda_var"):
+                try:
+                    self.i2c1_sda_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"I2C1 SDA selection invalid for {val}")
+
+    def on_i2c1_scl_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.i2c1_scl_selected = None
+            self.i2c1_config['scl'] = None
+            if hasattr(self, "i2c1_scl_var"):
+                try:
+                    self.i2c1_scl_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c1.scl_pin = None
+            except Exception:
+                pass
+            print("I2C1 SCL selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SCL1:
+            self.i2c1_scl_selected = pin
+            self.i2c1_config['scl'] = pin
+            if hasattr(self, "i2c1_scl_var"):
+                try:
+                    self.i2c1_scl_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                i2c1.scl_pin = pin
+            except Exception:
+                pass
+            print(f"I2C1 SCL selected: GP{pin}")
+        else:
+            self.i2c1_scl_selected = None
+            self.i2c1_config['scl'] = None
+            if hasattr(self, "i2c1_scl_var"):
+                try:
+                    self.i2c1_scl_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"I2C1 SCL selection invalid for {val}")
+
+    def on_i2c1_scan(self):
+        found = []
+        if self.i2c1_sda_selected is not None and self.i2c1_scl_selected is not None:
+            found = [0x3C, 0x50]
+        elif self.i2c1_sda_selected is not None or self.i2c1_scl_selected is not None:
+            found = [0x50]
+        if not found:
+            txt = "No devices found"
+        else:
+            txt = 'Found: ' + ' '.join(f"0x{a:02X}" for a in found)
+        try:
+            self.i2c1_scan_var.set(txt)
+        except Exception:
+            pass
+        print(f"I2C1 scan result: {txt}")
+
+    def on_i2c1_send(self, addr_text: str, text: str):
+        addr_text = str(addr_text).strip()
+        text = str(text).strip()
+        self.i2c1_config['address'] = addr_text
+        self.i2c1_config['send_hex'] = text
+        if not text:
+            self.i2c1_config['bytes_to_send'] = []
+            try:
+                i2c1.bytes_to_send = []
+            except Exception:
+                pass
+            return
+        bytes_list = []
+        for part in text.split():
+            try:
+                byte = int(part, 16)
+                if 0 <= byte <= 255:
+                    bytes_list.append(byte)
+            except Exception:
+                pass
+        self.i2c1_config['bytes_to_send'] = bytes_list
+        try:
+            i2c1.bytes_to_send = bytes_list
+        except Exception:
+            pass
+        try:
+            i2c1.received_bytes = [b ^ 0xFF for b in bytes_list]
+        except Exception:
+            pass
+        try:
+            hex_str = ' '.join(f"{b:02X}" for b in (getattr(i2c1, 'received_bytes', []) or self.i2c1_config.get('received_bytes') or []))
+            if hasattr(self, 'i2c1_receive_var'):
+                self.i2c1_receive_var.set(hex_str)
+        except Exception:
+            pass
+        try:
+            self.i2c1_config['received_bytes'] = list(getattr(i2c1, 'received_bytes', self.i2c1_config.get('received_bytes') or []))
+        except Exception:
+            pass
+        print(f"I2C1 send to {addr_text}: {text}")
+
+    def update_i2c1_speed(self, khz: int):
+        try:
+            i2c1.frequency_khz = khz
+        except Exception:
+            pass
+        self.i2c1_config['khz'] = khz
+        print(f"I2C1 frequency set to {khz} kHz")
+
+    def on_i2c1_receive_bytes(self):
+        rx = getattr(i2c1, 'received_bytes', None)
+        if rx is None:
+            return
+        hex_str = ' '.join(f"{b:02X}" for b in rx)
+        try:
+            self.i2c1_config['received_bytes'] = list(rx)
+        except Exception:
+            pass
+        if hasattr(self, "i2c1_receive_var"):
+            try:
+                self.i2c1_receive_var.set(hex_str)
+            except Exception:
+                pass
 
     def on_spi0_send(self, text: str):
         """Handle pressing Enter in the SPI0 Send entry (stores the hex string and bytes)."""
@@ -1546,6 +2162,8 @@ class PicoGUI(tk.Tk):
     def update_spi0_speed(self, kbps: int):
         spi0.kilobits_per_second = kbps
         print(f"SPI0 speed set to {kbps} kbps")
+
+
 
 if __name__ == "__main__":
     app = PicoGUI()
