@@ -122,6 +122,17 @@ while True:
                         p.init(p.IN, p.PULL_DOWN)
                     else:
                         p.init(p.IN)  # No pull
+
+                    # If this pin is currently in DIN mode, immediately report its value
+                    # so the host GUI can update without requiring a mode reselect.
+                    try:
+                        if pin in din_map:
+                            v = p.value()
+                            print(f"{pin},din,{v}")
+                            # keep din_last in sync to avoid duplicate prints at the next sync
+                            din_last[pin] = v
+                    except Exception:
+                        pass
                 
                 elif param == "pwm_duty":
                     # Accept integer or decimal percent values (e.g. "56.98").

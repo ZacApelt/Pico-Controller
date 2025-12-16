@@ -611,6 +611,7 @@ class PicoGUI(tk.Tk):
                 pass
         #print(f"\tsend GP{pin} PUD changed to {self.pins[pin].pud}")
         self.send_pin_parameter(pin, "pud", self.pins[pin].pud)
+        self.send_pin_parameter(pin, "mode", "DIN")
 
     def update_ADC(self, pins: list[int]):
         box = ttk.LabelFrame(self.fn_container, text="ADC", padding=8)
