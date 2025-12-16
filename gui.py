@@ -251,6 +251,9 @@ class PicoGUI(tk.Tk):
 
         self.pin_slider_widget = {}  # pin -> Scale widget (PWM duty/servo angle)
         self.pin_slider_label = {}  # pin -> Label widget for slider value
+        # per-pin ADC readout widgets
+        self.pin_adc_count_label = {}  # pin -> Label (counts)
+        self.pin_adc_volt_label = {}   # pin -> Label (voltage)
 
         # SPI0 selections and config
         self.spi0_mosi_selected = None
@@ -309,7 +312,7 @@ class PicoGUI(tk.Tk):
         #self.set_pin_mode(0, PinMode.DOUT)
         #self.set_pin_mode(26, PinMode.ADC)
         #self.set_pin_mode(1, PinMode.PWM)
-        self.set_ADC_value(26, 32768)
+        #self.set_ADC_value(26, 32768)
 
     # ---------- communication ----------
     def send_pin_parameter(self, pin, param, value):
@@ -348,7 +351,20 @@ class PicoGUI(tk.Tk):
         # parse and update UI on main thread
         text = data.decode('utf-8', errors='replace').strip()
         
-        print(text)
+        lines = text.splitlines()
+        for line in lines:
+            line = line.strip()
+            parts = line.split(',')
+            pin = int(parts[0])
+            param = parts[1]
+            value = parts[2]
+
+            print(line, parts)
+
+            if param == "adc_value":
+                self.set_ADC_value(pin, int(value))
+            elif param == "din":
+                self.set_DIN_value(pin, int(value))
 
     # ---------- layout ----------
 
@@ -577,6 +593,14 @@ class PicoGUI(tk.Tk):
             self.pin_din_pud_menu[pin] = pud
             self.pin_din_pud_var[pin] = pud_var
     
+    def set_DIN_value(self, pin: int, din: int):
+        """Update the DIN value and refresh the indicator."""
+        self.pins[pin].din = 1 if din else 0
+        if pin in self.pin_din_indicator:
+            self.pin_din_indicator[pin].config(
+                bg="#333333" if self.pins[pin].din == 0 else "#00aa00"
+            )
+
     def on_pud_changed(self, pin: int, pud_value: str):
         self.pins[pin].pud = pud_value
         # keep the displayed variable in sync if we have it
@@ -605,14 +629,30 @@ class PicoGUI(tk.Tk):
             ttk.Label(row, text=f"GP{pin}  -  {display_alias}", width=20, anchor="w").pack(side="left", padx=(16, 0))
             
             adc_v = (self.pins[pin].adc_count / 65535.0) * 3.3
-            ttk.Label(row, text=f"{self.pins[pin].adc_count}", width=15).pack(side="left", padx=(2, 0))
-            ttk.Label(row, text=f"{adc_v:.3f} V", width=15).pack(side="left", padx=(2, 0))
+            # create/stash labels so they can be updated in-place when new readings arrive
+            count_lbl = ttk.Label(row, text=f"{self.pins[pin].adc_count}", width=15)
+            count_lbl.pack(side="left", padx=(2, 0))
+            volt_lbl = ttk.Label(row, text=f"{adc_v:.3f} V", width=15)
+            volt_lbl.pack(side="left", padx=(2, 0))
+
+            self.pin_adc_count_label[pin] = count_lbl
+            self.pin_adc_volt_label[pin] = volt_lbl
     
     def set_ADC_value(self, pin: int, counts: int):
         #if self.pins[pin].mode != PinMode.ADC:
         #    return
         self.pins[pin].adc_count = counts
         print(f"Pin {pin} ADC counts set to {counts}")
+
+        # Update any visible ADC labels immediately so the UI reflects the new reading
+        try:
+            if pin in self.pin_adc_count_label:
+                self.pin_adc_count_label[pin].config(text=f"{counts}")
+            if pin in self.pin_adc_volt_label:
+                adc_v = (counts / 65535.0) * 3.3
+                self.pin_adc_volt_label[pin].config(text=f"{adc_v:.3f} V")
+        except Exception:
+            pass
 
     def on_spi0_mosi_selected(self, val: str):
         """Handle MOSI selection: store which MOSI pin is active. Does not change pin modes.
