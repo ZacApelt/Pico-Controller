@@ -73,6 +73,16 @@ class I2C:
 i2c0 = I2C()
 i2c1 = I2C()
 
+class UART:
+    tx_pin: int | None = None
+    rx_pin: int | None = None
+    baud: int = 115200
+    bytes_to_send: list = []
+    received_bytes: bytes = b""
+
+uart0 = UART()
+uart1 = UART()
+
 #GPIO = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 27, 28]
 FUNCTIONS = ["DOUT", "DIN", "PWM", "SPI", "I2C", "UART"]
 PIN_MODES = {   0:  [PinMode.UNUSED, PinMode.DOUT, PinMode.DIN, PinMode.PWM, PinMode.MISO0, PinMode.SDA0, PinMode.TX0],
@@ -263,6 +273,15 @@ class PicoGUI(tk.Tk):
         self.i2c1_scl_selected = None
         self.i2c1_config = {"sda": None, "scl": None, "khz": 100, "address": None, "send_hex": None, "received_bytes": None, "bytes_to_send": []}
         self.i2c1_scan_var = tk.StringVar(value="")
+
+        # UART selections and config (UART0 and UART1)
+        self.uart0_tx_selected = None
+        self.uart0_rx_selected = None
+        self.uart0_config = {"tx": None, "rx": None, "baud": 115200, "send_text": None, "received_text": None, "bytes_to_send": []}
+
+        self.uart1_tx_selected = None
+        self.uart1_rx_selected = None
+        self.uart1_config = {"tx": None, "rx": None, "baud": 115200, "send_text": None, "received_text": None, "bytes_to_send": []}
 
         self._build_layout()
         self.refresh_function_boxes()
@@ -490,7 +509,8 @@ class PicoGUI(tk.Tk):
             "SPI1": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI1, PinMode.MISO1, PinMode.SCK1)],
             "I2C0": [p.num for p in self.pins.values() if p.mode in (PinMode.SDA0, PinMode.SCL0)],
             "I2C1": [p.num for p in self.pins.values() if p.mode in (PinMode.SDA1, PinMode.SCL1)],
-            "UART": [], #[p.num for p in self.pins.values() if p.mode == PinMode.UART],
+            "UART0": [p.num for p in self.pins.values() if p.mode in (PinMode.TX0, PinMode.RX0)],
+            "UART1": [p.num for p in self.pins.values() if p.mode in (PinMode.TX1, PinMode.RX1)],
         }
 
         #for title in FUNCTIONS:
@@ -501,7 +521,7 @@ class PicoGUI(tk.Tk):
         self.update_PWM(sorted(groups["PWM"]))
         self.update_SPI(groups["SPI0"], groups["SPI1"])
         self.update_I2C(groups["I2C0"], groups["I2C1"]) 
-
+        self.update_UART(groups["UART0"], groups["UART1"])
 
     def update_DOUT(self, pins: list[int]):
         box = ttk.LabelFrame(self.fn_container, text="DOUT", padding=8)
@@ -1417,6 +1437,170 @@ class PicoGUI(tk.Tk):
             i2c1_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c1_receive_var, state="readonly")
             i2c1_receive_entry.pack(side="left", padx=(4, 0))
 
+    def update_UART(self, uart0_pins: list[int], uart1_pins: list[int]):
+        box = ttk.LabelFrame(self.fn_container, text="UART", padding=8)
+        box.pack(fill="x", pady=8)
+
+        if not uart0_pins and not uart1_pins:
+            ttk.Label(box, text="No pins assigned.").pack(anchor="w")
+            return
+
+        # UART0
+        if uart0_pins:
+            uart0_box = ttk.LabelFrame(box, text="UART0", padding=8)
+            uart0_box.pack(fill="x", pady=4)
+
+            row = ttk.Frame(uart0_box)
+            row.pack(fill="x", pady=2)
+
+            ttk.Label(row, text="TX:", anchor="w").pack(side="left", padx=(8, 8))
+            tx0_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in uart0_pins if self.pins[p].mode == PinMode.TX0]
+            tx0_sel = PinMode.UNUSED.value
+            if hasattr(self, 'uart0_tx_selected') and self.uart0_tx_selected is not None:
+                sel_str = f"GP{self.uart0_tx_selected}"
+                if sel_str in tx0_options:
+                    tx0_sel = sel_str
+                else:
+                    self.uart0_tx_selected = None
+                    self.uart0_config['tx'] = None
+            self.uart0_tx_var = tk.StringVar(value=tx0_sel)
+            tx0_menu = ttk.OptionMenu(row, self.uart0_tx_var, self.uart0_tx_var.get(), *tx0_options, command=lambda _val: self.on_uart0_tx_selected(_val))
+            tx0_menu.config(width=6)
+            tx0_menu.pack(side="left", padx=(6, 6))
+
+            ttk.Label(row, text="RX:", anchor="w").pack(side="left", padx=(8, 8))
+            rx0_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in uart0_pins if self.pins[p].mode == PinMode.RX0]
+            rx0_sel = PinMode.UNUSED.value
+            if hasattr(self, 'uart0_rx_selected') and self.uart0_rx_selected is not None:
+                sel_str = f"GP{self.uart0_rx_selected}"
+                if sel_str in rx0_options:
+                    rx0_sel = sel_str
+                else:
+                    self.uart0_rx_selected = None
+                    self.uart0_config['rx'] = None
+            self.uart0_rx_var = tk.StringVar(value=rx0_sel)
+            rx0_menu = ttk.OptionMenu(row, self.uart0_rx_var, self.uart0_rx_var.get(), *rx0_options, command=lambda _val: self.on_uart0_rx_selected(_val))
+            rx0_menu.config(width=6)
+            rx0_menu.pack(side="left", padx=(6, 6))
+
+            # baud
+            baud0_var = tk.StringVar(value=self.uart0_config.get('baud', 115200))
+            ttk.Label(row, text="baud:").pack(side="left", padx=(2, 0))
+            baud0_entry = tk.Entry(row, width=8, textvariable=baud0_var)
+            baud0_entry.pack(side="left", padx=(2, 0))
+            baud0_entry.bind("<Return>", lambda e: self.update_uart0_baud(int(baud0_var.get())))
+            baud0_entry.bind("<FocusOut>", lambda e: self.update_uart0_baud(int(baud0_var.get())))
+
+            # Row2: send / received (text)
+            row2 = ttk.Frame(uart0_box)
+            row2.pack(fill="x", pady=(6, 0))
+            ttk.Label(row2, text="Send Text:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            saved_send = self.uart0_config.get('send_text', '')
+            if hasattr(self, 'uart0_send_var'):
+                try:
+                    if saved_send is not None:
+                        self.uart0_send_var.set(saved_send)
+                except Exception:
+                    pass
+            else:
+                self.uart0_send_var = tk.StringVar(value=saved_send if saved_send is not None else "")
+
+            uart0_send_entry = tk.Entry(row2, width=40, textvariable=self.uart0_send_var)
+            uart0_send_entry.pack(side="left", padx=(4, 0))
+            uart0_send_entry.bind("<Return>", lambda e: self.on_uart0_send(self.uart0_send_var.get()))
+
+            ttk.Label(row2, text="  Received:", width=9, anchor="w").pack(side="left", padx=(12, 0))
+            saved_recv = self.uart0_config.get('received_text', '')
+            if hasattr(self, 'uart0_receive_var'):
+                try:
+                    if saved_recv is not None:
+                        self.uart0_receive_var.set(saved_recv)
+                except Exception:
+                    pass
+            else:
+                self.uart0_receive_var = tk.StringVar(value=saved_recv if saved_recv is not None else "")
+
+            uart0_receive_entry = tk.Entry(row2, width=40, textvariable=self.uart0_receive_var, state="readonly")
+            uart0_receive_entry.pack(side="left", padx=(4, 0))
+
+        # UART1 (mirror)
+        if uart1_pins:
+            uart1_box = ttk.LabelFrame(box, text="UART1", padding=8)
+            uart1_box.pack(fill="x", pady=4)
+
+            row = ttk.Frame(uart1_box)
+            row.pack(fill="x", pady=2)
+
+            ttk.Label(row, text="TX:", anchor="w").pack(side="left", padx=(8, 8))
+            tx1_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in uart1_pins if self.pins[p].mode == PinMode.TX1]
+            tx1_sel = PinMode.UNUSED.value
+            if hasattr(self, 'uart1_tx_selected') and self.uart1_tx_selected is not None:
+                sel_str = f"GP{self.uart1_tx_selected}"
+                if sel_str in tx1_options:
+                    tx1_sel = sel_str
+                else:
+                    self.uart1_tx_selected = None
+                    self.uart1_config['tx'] = None
+            self.uart1_tx_var = tk.StringVar(value=tx1_sel)
+            tx1_menu = ttk.OptionMenu(row, self.uart1_tx_var, self.uart1_tx_var.get(), *tx1_options, command=lambda _val: self.on_uart1_tx_selected(_val))
+            tx1_menu.config(width=6)
+            tx1_menu.pack(side="left", padx=(6, 6))
+
+            ttk.Label(row, text="RX:", anchor="w").pack(side="left", padx=(8, 8))
+            rx1_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in uart1_pins if self.pins[p].mode == PinMode.RX1]
+            rx1_sel = PinMode.UNUSED.value
+            if hasattr(self, 'uart1_rx_selected') and self.uart1_rx_selected is not None:
+                sel_str = f"GP{self.uart1_rx_selected}"
+                if sel_str in rx1_options:
+                    rx1_sel = sel_str
+                else:
+                    self.uart1_rx_selected = None
+                    self.uart1_config['rx'] = None
+            self.uart1_rx_var = tk.StringVar(value=rx1_sel)
+            rx1_menu = ttk.OptionMenu(row, self.uart1_rx_var, self.uart1_rx_var.get(), *rx1_options, command=lambda _val: self.on_uart1_rx_selected(_val))
+            rx1_menu.config(width=6)
+            rx1_menu.pack(side="left", padx=(6, 6))
+
+            baud1_var = tk.StringVar(value=self.uart1_config.get('baud', 115200))
+            ttk.Label(row, text="baud:").pack(side="left", padx=(2, 0))
+            baud1_entry = tk.Entry(row, width=8, textvariable=baud1_var)
+            baud1_entry.pack(side="left", padx=(2, 0))
+            baud1_entry.bind("<Return>", lambda e: self.update_uart1_baud(int(baud1_var.get())))
+            baud1_entry.bind("<FocusOut>", lambda e: self.update_uart1_baud(int(baud1_var.get())))
+
+            row2 = ttk.Frame(uart1_box)
+            row2.pack(fill="x", pady=(6, 0))
+            ttk.Label(row2, text="Send Text:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            saved1_send = self.uart1_config.get('send_text', '')
+            if hasattr(self, 'uart1_send_var'):
+                try:
+                    if saved1_send is not None:
+                        self.uart1_send_var.set(saved1_send)
+                except Exception:
+                    pass
+            else:
+                self.uart1_send_var = tk.StringVar(value=saved1_send if saved1_send is not None else "")
+
+            uart1_send_entry = tk.Entry(row2, width=40, textvariable=self.uart1_send_var)
+            uart1_send_entry.pack(side="left", padx=(4, 0))
+            uart1_send_entry.bind("<Return>", lambda e: self.on_uart1_send(self.uart1_send_var.get()))
+
+            ttk.Label(row2, text="  Received:", width=9, anchor="w").pack(side="left", padx=(12, 0))
+            saved1_recv = self.uart1_config.get('received_text', '')
+            if hasattr(self, 'uart1_receive_var'):
+                try:
+                    if saved1_recv is not None:
+                        self.uart1_receive_var.set(saved1_recv)
+                except Exception:
+                    pass
+            else:
+                self.uart1_receive_var = tk.StringVar(value=saved1_recv if saved1_recv is not None else "")
+
+            uart1_receive_entry = tk.Entry(row2, width=40, textvariable=self.uart1_receive_var, state="readonly")
+            uart1_receive_entry.pack(side="left", padx=(4, 0))
+
     def on_i2c0_sda_selected(self, val: str):
         """Select SDA pin for I2C0 (only pins currently in SDA0 appear in menu)."""
         if val == PinMode.UNUSED.value or val == "----":
@@ -1803,8 +1987,325 @@ class PicoGUI(tk.Tk):
             except Exception:
                 pass
 
+    def on_uart0_tx_selected(self, val: str):
+        """Select TX pin for UART0 (only pins currently in TX0 appear in menu)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.uart0_tx_selected = None
+            self.uart0_config['tx'] = None
+            if hasattr(self, "uart0_tx_var"):
+                try:
+                    self.uart0_tx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart0.tx_pin = None
+            except Exception:
+                pass
+            print("UART0 TX selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.TX0:
+            self.uart0_tx_selected = pin
+            self.uart0_config['tx'] = pin
+            if hasattr(self, "uart0_tx_var"):
+                try:
+                    self.uart0_tx_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart0.tx_pin = pin
+            except Exception:
+                pass
+            print(f"UART0 TX selected: GP{pin}")
+        else:
+            self.uart0_tx_selected = None
+            self.uart0_config['tx'] = None
+            if hasattr(self, "uart0_tx_var"):
+                try:
+                    self.uart0_tx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"UART0 TX selection invalid for {val}")
+
+    def on_uart0_rx_selected(self, val: str):
+        """Select RX pin for UART0 (only pins currently in RX0 appear in menu)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.uart0_rx_selected = None
+            self.uart0_config['rx'] = None
+            if hasattr(self, "uart0_rx_var"):
+                try:
+                    self.uart0_rx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart0.rx_pin = None
+            except Exception:
+                pass
+            print("UART0 RX selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.RX0:
+            self.uart0_rx_selected = pin
+            self.uart0_config['rx'] = pin
+            if hasattr(self, "uart0_rx_var"):
+                try:
+                    self.uart0_rx_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart0.rx_pin = pin
+            except Exception:
+                pass
+            print(f"UART0 RX selected: GP{pin}")
+        else:
+            self.uart0_rx_selected = None
+            self.uart0_config['rx'] = None
+            if hasattr(self, "uart0_rx_var"):
+                try:
+                    self.uart0_rx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"UART0 RX selection invalid for {val}")
+
+    def on_uart0_send(self, text: str):
+        """Send text over UART0 (persist and show simulated response)."""
+        text = str(text or "")
+        self.uart0_config['send_text'] = text
+        if not text:
+            self.uart0_config['bytes_to_send'] = []
+            try:
+                uart0.bytes_to_send = []
+            except Exception:
+                pass
+            return
+        try:
+            data = text.encode('utf-8')
+            uart0.bytes_to_send = list(data)
+            self.uart0_config['bytes_to_send'] = list(data)
+        except Exception:
+            data = b""
+        # simulate a response: echo back the same bytes
+        try:
+            uart0.received_bytes = data
+        except Exception:
+            pass
+        # update received text display and persist
+        try:
+            recv_text = (getattr(uart0, 'received_bytes', b'') or b'').decode('utf-8', errors='replace')
+            if hasattr(self, 'uart0_receive_var'):
+                self.uart0_receive_var.set(recv_text)
+            self.uart0_config['received_text'] = recv_text
+        except Exception:
+            pass
+        print(f"UART0 send: {text}")
+
+    def update_uart0_baud(self, baud: int):
+        try:
+            uart0.baud = baud
+        except Exception:
+            pass
+        self.uart0_config['baud'] = baud
+        print(f"UART0 baud set to {baud}")
+
+    def on_uart0_receive(self):
+        rx = getattr(uart0, 'received_bytes', None)
+        if rx is None:
+            return
+        try:
+            txt = ' '.join(f"{b:02X}" for b in rx)
+        except Exception:
+            txt = ''
+        try:
+            self.uart0_config['received_text'] = (rx.decode('utf-8', errors='replace') if isinstance(rx, (bytes, bytearray)) else str(rx))
+            if hasattr(self, 'uart0_receive_var'):
+                self.uart0_receive_var.set(self.uart0_config['received_text'])
+        except Exception:
+            pass
+
+    # --- UART1 handlers (mirror UART0) ---
+    def on_uart1_tx_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.uart1_tx_selected = None
+            self.uart1_config['tx'] = None
+            if hasattr(self, "uart1_tx_var"):
+                try:
+                    self.uart1_tx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart1.tx_pin = None
+            except Exception:
+                pass
+            print("UART1 TX selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.TX1:
+            self.uart1_tx_selected = pin
+            self.uart1_config['tx'] = pin
+            if hasattr(self, "uart1_tx_var"):
+                try:
+                    self.uart1_tx_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart1.tx_pin = pin
+            except Exception:
+                pass
+            print(f"UART1 TX selected: GP{pin}")
+        else:
+            self.uart1_tx_selected = None
+            self.uart1_config['tx'] = None
+            if hasattr(self, "uart1_tx_var"):
+                try:
+                    self.uart1_tx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"UART1 TX selection invalid for {val}")
+
+    def on_uart1_rx_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.uart1_rx_selected = None
+            self.uart1_config['rx'] = None
+            if hasattr(self, "uart1_rx_var"):
+                try:
+                    self.uart1_rx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart1.rx_pin = None
+            except Exception:
+                pass
+            print("UART1 RX selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.RX1:
+            self.uart1_rx_selected = pin
+            self.uart1_config['rx'] = pin
+            if hasattr(self, "uart1_rx_var"):
+                try:
+                    self.uart1_rx_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            try:
+                uart1.rx_pin = pin
+            except Exception:
+                pass
+            print(f"UART1 RX selected: GP{pin}")
+        else:
+            self.uart1_rx_selected = None
+            self.uart1_config['rx'] = None
+            if hasattr(self, "uart1_rx_var"):
+                try:
+                    self.uart1_rx_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"UART1 RX selection invalid for {val}")
+
+    def on_uart1_send(self, text: str):
+        text = str(text or "")
+        self.uart1_config['send_text'] = text
+        if not text:
+            self.uart1_config['bytes_to_send'] = []
+            try:
+                uart1.bytes_to_send = []
+            except Exception:
+                pass
+            return
+        try:
+            data = text.encode('utf-8')
+            uart1.bytes_to_send = list(data)
+            self.uart1_config['bytes_to_send'] = list(data)
+        except Exception:
+            data = b""
+        try:
+            uart1.received_bytes = data
+        except Exception:
+            pass
+        try:
+            recv_text = (getattr(uart1, 'received_bytes', b'') or b'').decode('utf-8', errors='replace')
+            if hasattr(self, 'uart1_receive_var'):
+                self.uart1_receive_var.set(recv_text)
+            self.uart1_config['received_text'] = recv_text
+        except Exception:
+            pass
+        print(f"UART1 send: {text}")
+
+    def update_uart1_baud(self, baud: int):
+        try:
+            uart1.baud = baud
+        except Exception:
+            pass
+        self.uart1_config['baud'] = baud
+        print(f"UART1 baud set to {baud}")
+
+    def on_uart1_receive(self):
+        rx = getattr(uart1, 'received_bytes', None)
+        if rx is None:
+            return
+        try:
+            self.uart1_config['received_text'] = (rx.decode('utf-8', errors='replace') if isinstance(rx, (bytes, bytearray)) else str(rx))
+            if hasattr(self, 'uart1_receive_var'):
+                self.uart1_receive_var.set(self.uart1_config['received_text'])
+        except Exception:
+            pass
+
     def on_spi0_send(self, text: str):
-        """Handle pressing Enter in the SPI0 Send entry (stores the hex string and bytes)."""
         text = str(text).strip()
         # persist the entered hex text so it survives UI refreshes
         self.spi0_config['send_hex'] = text
