@@ -50,6 +50,20 @@ class Pin:
     pwm_freq: float = 1000.0  # Hz
     pwm_duty: float = 0.0  # percentage 0-100
 
+class SPI0:
+    mosi_pin: int | None = None
+    miso_pin: int | None = None
+    sck_pin: int | None = None
+    csn_pin: int | None = None
+spi0 = SPI0()
+
+class SPI1:
+    mosi_pin: int | None = None
+    miso_pin: int | None = None
+    sck_pin: int | None = None
+    csn_pin: int | None = None
+spi1 = SPI1()
+
 
 #GPIO = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 27, 28]
 FUNCTIONS = ["DOUT", "DIN", "PWM", "SPI", "I2C", "UART"]
@@ -195,7 +209,7 @@ class PicoGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Pico GPIO Control")
-        self.geometry("1100x650")
+        self.geometry("1150x650")
 
         # state: pin number -> Pin
         self.pins = {n: Pin(num=n) for n in PIN_MODES.keys()}
@@ -216,6 +230,13 @@ class PicoGUI(tk.Tk):
 
         self.pin_slider_widget = {}  # pin -> Scale widget (PWM duty/servo angle)
         self.pin_slider_label = {}  # pin -> Label widget for slider value
+
+        # SPI0 selections and config
+        self.spi0_mosi_selected = None
+        self.spi0_miso_selected = None
+        self.spi0_sck_selected = None
+        self.spi0_csn = None
+        self.spi0_config = {"mosi": None, "miso": None, "sck": None, "csn": None}
 
         self._build_layout()
         self.refresh_function_boxes()
@@ -240,11 +261,11 @@ class PicoGUI(tk.Tk):
         left.configure(width=400)
         left.grid_propagate(False)
 
-        ttk.Label(left, text="GPIO Overview", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        ttk.Label(left, text="GPIO Configuration", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=(16, 0))
 
         # Scrollable list of GPIO rows
         self.left_scroll = ScrollableFrame(left)
-        self.left_scroll.pack(fill="both", expand=True, pady=(8, 0))
+        self.left_scroll.pack(fill="both", expand=True, pady=(8, 0), padx=(32, 0))
 
         # Build GPIO rows
         for pin in PIN_MODES.keys():
@@ -439,7 +460,8 @@ class PicoGUI(tk.Tk):
             "DOUT": [p.num for p in self.pins.values() if p.mode == PinMode.DOUT],
             "DIN": [p.num for p in self.pins.values() if p.mode == PinMode.DIN],
             "PWM": [p.num for p in self.pins.values() if p.mode == PinMode.PWM],
-            "SPI": [], #[p.num for p in self.pins.values() if p.mode == PinMode.SPI],
+            "SPI0": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI0, PinMode.MISO0, PinMode.SCK0)],
+            "SPI1": [p.num for p in self.pins.values() if p.mode in (PinMode.MOSI1, PinMode.MISO1, PinMode.SCK1)],
             "I2C": [], #[p.num for p in self.pins.values() if p.mode == PinMode.I2C],
             "UART": [], #[p.num for p in self.pins.values() if p.mode == PinMode.UART],
         }
@@ -450,6 +472,7 @@ class PicoGUI(tk.Tk):
         self.update_DOUT(sorted(groups["DOUT"]))
         self.update_DIN(sorted(groups["DIN"]))
         self.update_PWM(sorted(groups["PWM"]))
+        self.update_SPI(groups["SPI0"], groups["SPI1"])
 
 
     def update_DOUT(self, pins: list[int]):
@@ -546,6 +569,190 @@ class PicoGUI(tk.Tk):
             except Exception:
                 pass
         print(f"Pin {pin} PUD changed to {self.pins[pin].pud}")
+
+    def on_spi0_mosi_selected(self, val: str):
+        """Handle MOSI selection: store which MOSI pin is active. Does not change pin modes.
+        `val` is either the string '----' or 'GP<n>' matching one of the options.
+        """
+        if val == PinMode.UNUSED.value or val == "----":
+            # clear selection (do not modify pin modes)
+            self.spi0_mosi_selected = None
+            self.spi0_config['mosi'] = None
+            if hasattr(self, "spi0_mosi_var"):
+                try:
+                    self.spi0_mosi_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            print("SPI0 MOSI selection cleared")
+            return
+
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+
+        # Only allow selecting a pin that is currently configured as MOSI0
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.MOSI0:
+            self.spi0_mosi_selected = pin
+            self.spi0_config['mosi'] = pin
+            if hasattr(self, "spi0_mosi_var"):
+                try:
+                    self.spi0_mosi_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            print(f"SPI0 MOSI selected: GP{pin}")
+        else:
+            # invalid selection (shouldn't happen with filtered options) - clear
+            self.spi0_mosi_selected = None
+            self.spi0_config['mosi'] = None
+            if hasattr(self, "spi0_mosi_var"):
+                try:
+                    self.spi0_mosi_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI0 MOSI selection invalid for {val}")
+
+    def on_spi0_miso_selected(self, val: str):
+        """Select MISO pin for SPI0 (only pins currently in MISO0 appear in menu)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi0_miso_selected = None
+            self.spi0_config['miso'] = None
+            if hasattr(self, "spi0_miso_var"):
+                try:
+                    self.spi0_miso_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            print("SPI0 MISO selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.MISO0:
+            self.spi0_miso_selected = pin
+            self.spi0_config['miso'] = pin
+            if hasattr(self, "spi0_miso_var"):
+                try:
+                    self.spi0_miso_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            print(f"SPI0 MISO selected: GP{pin}")
+        else:
+            self.spi0_miso_selected = None
+            self.spi0_config['miso'] = None
+            if hasattr(self, "spi0_miso_var"):
+                try:
+                    self.spi0_miso_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI0 MISO selection invalid for {val}")
+
+    def on_spi0_sck_selected(self, val: str):
+        """Select SCK pin for SPI0 (only pins currently in SCK0 appear in menu)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi0_sck_selected = None
+            self.spi0_config['sck'] = None
+            if hasattr(self, "spi0_sck_var"):
+                try:
+                    self.spi0_sck_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            print("SPI0 SCK selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SCK0:
+            self.spi0_sck_selected = pin
+            self.spi0_config['sck'] = pin
+            if hasattr(self, "spi0_sck_var"):
+                try:
+                    self.spi0_sck_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            print(f"SPI0 SCK selected: GP{pin}")
+        else:
+            self.spi0_sck_selected = None
+            self.spi0_config['sck'] = None
+            if hasattr(self, "spi0_sck_var"):
+                try:
+                    self.spi0_sck_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI0 SCK selection invalid for {val}")
+
+    def on_spi0_csn_selected(self, val: str):
+        """Select CSn pin for SPI0 (only pins currently in DOUT appear in menu)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi0_csn = None
+            self.spi0_config['csn'] = None
+            if hasattr(self, "spi0_csn_var"):
+                try:
+                    self.spi0_csn_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print("SPI0 CSn selection cleared")
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        # ensure it's DOUT
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.DOUT:
+            self.spi0_csn = pin
+            self.spi0_config['csn'] = pin
+            if hasattr(self, "spi0_csn_var"):
+                try:
+                    self.spi0_csn_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            print(f"SPI0 CSn set to pin {pin}")
+        else:
+            self.spi0_csn = None
+            self.spi0_config['csn'] = None
+            if hasattr(self, "spi0_csn_var"):
+                try:
+                    self.spi0_csn_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI0 CSn selection invalid (pin {val} not DOUT)")
 
     def update_PWM(self, pins: list[int]):
         box = ttk.LabelFrame(self.fn_container, text="PWM", padding=8)
@@ -708,6 +915,109 @@ class PicoGUI(tk.Tk):
                     pass
             print(f"Pin {pin} PWM duty cycle set to {value:.1f}%")
     
+    def update_SPI(self, spi0_pins: list[int], spi1_pins: list[int]):
+        
+        box = ttk.LabelFrame(self.fn_container, text="SPI", padding=8)
+        box.pack(fill="x", pady=8)
+
+        if not spi0_pins and not spi1_pins:
+            ttk.Label(box, text="No pins assigned.").pack(anchor="w")
+            return
+
+        # create a sub-box for SPI0 (show MOSI selection only for pins currently set to MOSI0)
+        # spi0_pins contains any pin participating in SPI0 (MOSI/MISO/SCK). We only want
+        # options that are currently MODE == MOSI0 so selection is manual and explicit.
+        if spi0_pins:
+            spi0_box = ttk.LabelFrame(box, text="SPI0", padding=8)
+            spi0_box.pack(fill="x", pady=4)
+
+            # MOSI
+            row = ttk.Frame(spi0_box)
+            row.pack(fill="x", pady=2)
+
+            ttk.Label(row, text="MOSI:", anchor="w").pack(side="left", padx=(8, 8))
+
+            # options: default '----' plus GP<n> for pins currently configured as MOSI0
+            mosi_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in spi0_pins if self.pins[p].mode == PinMode.MOSI0]
+
+            # determine current selection: keep previous explicit selection if valid, otherwise '----'
+            current_sel = PinMode.UNUSED.value
+            if hasattr(self, 'spi0_mosi_selected') and self.spi0_mosi_selected is not None:
+                sel_str = f"GP{self.spi0_mosi_selected}"
+                if sel_str in mosi_options:
+                    current_sel = sel_str
+                else:
+                    # previously selected pin is no longer valid
+                    self.spi0_mosi_selected = None
+                    self.spi0_config['mosi'] = None
+            # otherwise leave as '----' (user must manually choose)
+
+            self.spi0_mosi_var = tk.StringVar(value=current_sel)
+            mosi_menu = ttk.OptionMenu(row, self.spi0_mosi_var, self.spi0_mosi_var.get(), *mosi_options, command=lambda _val: self.on_spi0_mosi_selected(_val))
+            mosi_menu.config(width=6)
+            mosi_menu.pack(side="left", padx=(6, 6))
+
+            # MISO (only pins currently set to MISO0)
+            ttk.Label(row, text="MISO:", anchor="w").pack(side="left", padx=(8, 8))
+            miso_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in spi0_pins if self.pins[p].mode == PinMode.MISO0]
+            miso_sel = PinMode.UNUSED.value
+            if hasattr(self, 'spi0_miso_selected') and self.spi0_miso_selected is not None:
+                sel_str = f"GP{self.spi0_miso_selected}"
+                if sel_str in miso_options:
+                    miso_sel = sel_str
+                else:
+                    self.spi0_miso_selected = None
+                    self.spi0_config['miso'] = None
+            self.spi0_miso_var = tk.StringVar(value=miso_sel)
+            miso_menu = ttk.OptionMenu(row, self.spi0_miso_var, self.spi0_miso_var.get(), *miso_options, command=lambda _val: self.on_spi0_miso_selected(_val))
+            miso_menu.config(width=6)
+            miso_menu.pack(side="left", padx=(6, 6))
+
+            # SCK (only pins currently set to SCK0)
+            ttk.Label(row, text="SCK:", anchor="w").pack(side="left", padx=(8, 8))
+            sck_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in spi0_pins if self.pins[p].mode == PinMode.SCK0]
+            sck_sel = PinMode.UNUSED.value
+            if hasattr(self, 'spi0_sck_selected') and self.spi0_sck_selected is not None:
+                sel_str = f"GP{self.spi0_sck_selected}"
+                if sel_str in sck_options:
+                    sck_sel = sel_str
+                else:
+                    self.spi0_sck_selected = None
+                    self.spi0_config['sck'] = None
+            self.spi0_sck_var = tk.StringVar(value=sck_sel)
+            sck_menu = ttk.OptionMenu(row, self.spi0_sck_var, self.spi0_sck_var.get(), *sck_options, command=lambda _val: self.on_spi0_sck_selected(_val))
+            sck_menu.config(width=6)
+            sck_menu.pack(side="left", padx=(6, 6))
+
+            # CSn (choose any pin currently in DOUT mode)
+            ttk.Label(row, text="CSn:", anchor="w").pack(side="left", padx=(8, 8))
+            csn_candidates = [p.num for p in self.pins.values() if p.mode == PinMode.DOUT]
+            csn_options = [PinMode.UNUSED.value] + [f"GP{p}" for p in csn_candidates]
+            csn_sel = PinMode.UNUSED.value
+            if getattr(self, 'spi0_csn', None) is not None:
+                sel_str = f"GP{self.spi0_csn}"
+                if sel_str in csn_options:
+                    csn_sel = sel_str
+                else:
+                    self.spi0_csn = None
+                    self.spi0_config['csn'] = None
+            self.spi0_csn_var = tk.StringVar(value=csn_sel)
+            csn_menu = ttk.OptionMenu(row, self.spi0_csn_var, self.spi0_csn_var.get(), *csn_options, command=lambda _val: self.on_spi0_csn_selected(_val))
+            csn_menu.config(width=6)
+            csn_menu.pack(side="left", padx=(6, 6))
+
+        # create a sub-box for SPI1
+        if spi1_pins:
+            spi1_box = ttk.LabelFrame(box, text="SPI1", padding=8)
+            spi1_box.pack(fill="x", pady=4)
+
+            for pin in spi1_pins:
+                row = ttk.Frame(spi1_box)
+                row.pack(fill="x", pady=2)
+
+                ttk.Label(row, text=f"MOSI", width=20, anchor="w").pack(side="left", padx=(16, 0))
+
+            
 
 if __name__ == "__main__":
     app = PicoGUI()
