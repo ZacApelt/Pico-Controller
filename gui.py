@@ -60,8 +60,8 @@ class SPI:
     sck_pin: int | None = None
     csn_pin: int | None = None
     kilobits_per_second: int = 1000
-    bytes_to_send: bytes = b""
-    received_bytes: bytes = b""
+    bytes_to_send = ""
+    received_bytes = ""
 
 spi0 = SPI()
 spi1 = SPI()
@@ -321,7 +321,7 @@ class PicoGUI(tk.Tk):
         `param` is a string indicating the parameter to set, e.g. "mode", "dout", "pwm_freq", etc.
         `value` is the new value for the parameter.
         """
-        print(f"\tsend: Set GP{pin} {param} to {value}")
+        print(f"\tsend: {pin},{param},{value}")
         
         if self.ser:
             data = f"{pin},{param},{value}\n"
@@ -350,9 +350,11 @@ class PicoGUI(tk.Tk):
     def _handle_serial_bytes(self, data: bytes):
         # parse and update UI on main thread
         text = data.decode('utf-8', errors='replace').strip()
+        print(f"the following was received:\n {text}\nend of received")
         
-        lines = text.splitlines()
+        lines = text.split('\n')
         for line in lines:
+            print(f"line: \n{line}\ndone")
             line = line.strip()
             parts = line.split(',')
             pin = int(parts[0])
@@ -365,6 +367,19 @@ class PicoGUI(tk.Tk):
                 self.set_ADC_value(pin, int(value))
             elif param == "din":
                 self.set_DIN_value(pin, int(value))
+            elif param == "spi0_recv":
+                spi0.received_bytes = value
+                print(f"should display {value}, {spi0.received_bytes}")
+                self.on_spi0_receive_bytes()
+            elif param == "spi1_recv":
+                spi1.received_bytes = value
+                self.on_spi1_receive_bytes()
+            elif param == "uart0_recv":
+                uart0.received_bytes = value
+                self.on_uart0_receive()
+            elif param == "uart1_recv":
+                uart1.received_bytes = value
+                self.on_uart1_receive()
 
     # ---------- layout ----------
 
@@ -655,6 +670,7 @@ class PicoGUI(tk.Tk):
         except Exception:
             pass
 
+    # --- SPI0 handlers ---
     def on_spi0_mosi_selected(self, val: str):
         """Handle MOSI selection: store which MOSI pin is active. Does not change pin modes.
         `val` is either the string '----' or 'GP<n>' matching one of the options.
@@ -672,7 +688,9 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("\tsend SPI0 MOSI pin removed")
+            #print("\tsend SPI0 MOSI pin removed")
+            # send a clear command (value 255) using a valid pin id (0) in the leading field
+            self.send_pin_parameter(0, "spi0_mosi", 255)
             return
 
         pin_str = str(val)
@@ -696,7 +714,9 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"\tsend: SPI0 MOSI selected: GP{pin}")
+            #print(f"\tsend: SPI0 MOSI selected: GP{pin}")
+            # send selected pin number as the value (use a valid leading pin id of 0)
+            self.send_pin_parameter(0, "spi0_mosi", pin)
         else:
             # invalid selection (shouldn't happen with filtered options) - clear
             self.spi0_mosi_selected = None
@@ -722,7 +742,8 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("\tsend: SPI0 MISO selection cleared")
+            #print("\tsend: SPI0 MISO selection cleared")
+            self.send_pin_parameter(0, "spi0_miso", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -743,7 +764,8 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"\tsend: SPI0 MISO selected: GP{pin}")
+            #print(f"\tsend: SPI0 MISO selected: GP{pin}")
+            self.send_pin_parameter(0, "spi0_miso", pin)
         else:
             self.spi0_miso_selected = None
             self.spi0_config['miso'] = None
@@ -768,7 +790,8 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print("\tsend: SPI0 SCK selection cleared")
+            #print("\tsend: SPI0 SCK selection cleared")
+            self.send_pin_parameter(0, "spi0_sck", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -789,7 +812,8 @@ class PicoGUI(tk.Tk):
                 self.refresh_function_boxes()
             except Exception:
                 pass
-            print(f"\tsend: SPI0 SCK selected: GP{pin}")
+            #print(f"\tsend: SPI0 SCK selected: GP{pin}")
+            self.send_pin_parameter(0, "spi0_sck", pin)
         else:
             self.spi0_sck_selected = None
             self.spi0_config['sck'] = None
@@ -810,7 +834,8 @@ class PicoGUI(tk.Tk):
                     self.spi0_csn_var.set(PinMode.UNUSED.value)
                 except Exception:
                     pass
-            print("\tsend: SPI0 CSn selection cleared")
+            #print("\tsend: SPI0 CSn selection cleared")
+            self.send_pin_parameter(0, "spi0_csn", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -828,7 +853,8 @@ class PicoGUI(tk.Tk):
                     self.spi0_csn_var.set(f"GP{pin}")
                 except Exception:
                     pass
-            print(f"\tsend: SPI0 CSn set to pin {pin}")
+            #print(f"\tsend: SPI0 CSn set to pin {pin}")
+            self.send_pin_parameter(0, "spi0_csn", pin)
         else:
             self.spi0_csn = None
             self.spi0_config['csn'] = None
@@ -839,6 +865,298 @@ class PicoGUI(tk.Tk):
                     pass
             print(f"SPI0 CSn selection invalid (pin {val} not DOUT)")
 
+    def on_spi0_send(self, text: str):
+        text = str(text).strip()
+        # persist the entered hex text so it survives UI refreshes
+        self.spi0_config['send_hex'] = text
+
+        if not text:
+            # also clear bytes_to_send
+            self.spi0_config['bytes_to_send'] = []
+            spi0.bytes_to_send = []
+            return
+
+        print(f"SPI0 send: {text}")
+        # store both in local config and (if available) the spi0 object
+        self.spi0_config['bytes_to_send'] = text
+        try:
+            spi0.bytes_to_send = text
+        except Exception:
+            pass
+
+        self.send_pin_parameter(255, 'spi0_send', text)
+
+    def update_spi0_speed(self, kbps: int):
+        spi0.kilobits_per_second = kbps
+        #print(f"SPI0 speed set to {kbps} kbps")
+        self.send_pin_parameter(255, 'spi0_kbaud', int(kbps))
+
+    def on_spi0_receive_bytes(self):
+        """Update the SPI0 received bytes display from the spi0.received_bytes and persist."""
+        rx = getattr(spi0, 'received_bytes', None)
+        self.spi0_receive_var.set(rx)
+
+    # --- SPI1 handlers (mirror SPI0 behavior) ---
+    def on_spi1_mosi_selected(self, val: str):
+        """Handle SPI1 MOSI selection (manual only)."""
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi1_mosi_selected = None
+            self.spi1_config['mosi'] = None
+            if hasattr(self, "spi1_mosi_var"):
+                try:
+                    self.spi1_mosi_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            #print("\tsend: SPI1 MOSI selection cleared")
+            self.send_pin_parameter(0, "spi1_mosi", 255)
+            try:
+                spi1.mosi_pin = None
+            except Exception:
+                pass
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.MOSI1:
+            self.spi1_mosi_selected = pin
+            self.spi1_config['mosi'] = pin
+            if hasattr(self, "spi1_mosi_var"):
+                try:
+                    self.spi1_mosi_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            #print(f"\tsend: SPI1 MOSI selected: GP{pin}")
+            self.send_pin_parameter(0, "spi0_mosi", pin)
+            try:
+                spi1.mosi_pin = pin
+            except Exception:
+                pass
+        else:
+            self.spi1_mosi_selected = None
+            self.spi1_config['mosi'] = None
+            if hasattr(self, "spi1_mosi_var"):
+                try:
+                    self.spi1_mosi_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI1 MOSI selection invalid for {val}")
+            try:
+                spi1.mosi_pin = None
+            except Exception:
+                pass
+
+    def on_spi1_miso_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi1_miso_selected = None
+            self.spi1_config['miso'] = None
+            if hasattr(self, "spi1_miso_var"):
+                try:
+                    self.spi1_miso_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            #print("\tsend: SPI1 MISO selection cleared")
+            self.send_pin_parameter(0, "spi1_miso", 255)
+            try:
+                spi1.miso_pin = None
+            except Exception:
+                pass
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.MISO1:
+            self.spi1_miso_selected = pin
+            self.spi1_config['miso'] = pin
+            if hasattr(self, "spi1_miso_var"):
+                try:
+                    self.spi1_miso_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            #print(f"\tsend: SPI1 MISO selected: GP{pin}")
+            self.send_pin_parameter(0, "spi1_miso", pin)
+            try:
+                spi1.miso_pin = pin
+            except Exception:
+                pass
+        else:
+            self.spi1_miso_selected = None
+            self.spi1_config['miso'] = None
+            if hasattr(self, "spi1_miso_var"):
+                try:
+                    self.spi1_miso_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI1 MISO selection invalid for {val}")
+            try:
+                spi1.miso_pin = None
+            except Exception:
+                pass
+
+    def on_spi1_sck_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi1_sck_selected = None
+            self.spi1_config['sck'] = None
+            if hasattr(self, "spi1_sck_var"):
+                try:
+                    self.spi1_sck_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            #print("\tsend: SPI1 SCK selection cleared")
+            self.send_pin_parameter(0, "spi1_sck", 255)
+            try:
+                spi1.sck_pin = None
+            except Exception:
+                pass
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SCK1:
+            self.spi1_sck_selected = pin
+            self.spi1_config['sck'] = pin
+            if hasattr(self, "spi1_sck_var"):
+                try:
+                    self.spi1_sck_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            try:
+                self.refresh_function_boxes()
+            except Exception:
+                pass
+            #print(f"\tsend: SPI1 SCK selected: GP{pin}")
+            self.send_pin_parameter(0, "spi1_sck", pin)
+            try:
+                spi1.sck_pin = pin
+            except Exception:
+                pass
+        else:
+            self.spi1_sck_selected = None
+            self.spi1_config['sck'] = None
+            if hasattr(self, "spi1_sck_var"):
+                try:
+                    self.spi1_sck_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"\tsend: SPI1 SCK selection invalid for {val}")
+            try:
+                spi1.sck_pin = None
+            except Exception:
+                pass
+
+    def on_spi1_csn_selected(self, val: str):
+        if val == PinMode.UNUSED.value or val == "----":
+            self.spi1_csn = None
+            self.spi1_config['csn'] = None
+            if hasattr(self, "spi1_csn_var"):
+                try:
+                    self.spi1_csn_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            #print("\tsend: SPI1 CSn selection cleared")
+            self.send_pin_parameter(0, "spi1_csn", 255)
+            try:
+                spi1.csn_pin = None
+            except Exception:
+                pass
+            return
+        pin_str = str(val)
+        if pin_str.startswith("GP"):
+            pin_str = pin_str[2:]
+        try:
+            pin = int(pin_str)
+        except Exception:
+            return
+        if self.pins.get(pin) and self.pins[pin].mode == PinMode.DOUT:
+            self.spi1_csn = pin
+            self.spi1_config['csn'] = pin
+            if hasattr(self, "spi1_csn_var"):
+                try:
+                    self.spi1_csn_var.set(f"GP{pin}")
+                except Exception:
+                    pass
+            #print(f"\tsend: SPI1 CSn set to pin {pin}")
+            self.send_pin_parameter(0, "spi1_csn", pin)
+            try:
+                spi1.csn_pin = pin
+            except Exception:
+                pass
+        else:
+            self.spi1_csn = None
+            self.spi1_config['csn'] = None
+            if hasattr(self, "spi1_csn_var"):
+                try:
+                    self.spi1_csn_var.set(PinMode.UNUSED.value)
+                except Exception:
+                    pass
+            print(f"SPI1 CSn selection invalid (pin {val} not DOUT)")
+            try:
+                spi1.csn_pin = None
+            except Exception:
+                pass
+
+    def on_spi1_send(self, text: str):
+        text = str(text).strip()
+        # persist the entered hex text so it survives UI refreshes
+        self.spi1_config['send_hex'] = text
+
+        if not text:
+            # also clear bytes_to_send
+            self.spi1_config['bytes_to_send'] = []
+            spi1.bytes_to_send = []
+            return
+
+        print(f"SPI1 send: {text}")
+        # store both in local config and (if available) the spi1 object
+        self.spi1_config['bytes_to_send'] = text
+        try:
+            spi1.bytes_to_send = text
+        except Exception:
+            pass
+
+        self.send_pin_parameter(255, 'spi1_send', text)
+
+    def update_spi1_speed(self, kbps: int):
+        spi1.kilobits_per_second = kbps
+        #print(f"SPI0 speed set to {kbps} kbps")
+        self.send_pin_parameter(255, 'spi1_kbaud', int(kbps))
+
+    def on_spi1_receive_bytes(self):
+        rx = getattr(spi1, 'received_bytes', None)
+        self.spi1_receive_var.set(rx)
+
+    # --- PWM handlers ---
     def update_PWM(self, pins: list[int]):
         box = ttk.LabelFrame(self.fn_container, text="PWM", padding=8)
         box.pack(fill="x", pady=8)
@@ -1012,6 +1330,7 @@ class PicoGUI(tk.Tk):
             #print(f"Pin {pin} PWM duty cycle set to {value:.1f}%")
         self.send_pin_parameter(pin, "pwm_duty", round(self.pins[pin].pwm_duty,2))
     
+    # --- GUI refreshes ---
     def update_SPI(self, spi0_pins: list[int], spi1_pins: list[int]):
         
         box = ttk.LabelFrame(self.fn_container, text="SPI", padding=8)
@@ -1104,7 +1423,7 @@ class PicoGUI(tk.Tk):
             csn_menu.pack(side="left", padx=(6, 6))
 
             kbps_var = tk.StringVar(value=spi0.kilobits_per_second)
-            ttk.Label(row, text="baud:").pack(side="left", padx=(2, 0))
+            ttk.Label(row, text="kbps:").pack(side="left", padx=(2, 0))
             kbps_entry = tk.Entry(row, width=6, textvariable=kbps_var)
             kbps_entry.pack(side="left", padx=(2, 0))
 
@@ -1225,7 +1544,7 @@ class PicoGUI(tk.Tk):
             csn1_menu.pack(side="left", padx=(6, 6))
 
             kbps1_var = tk.StringVar(value=getattr(spi1, 'kilobits_per_second', self.spi1_config.get('kbps', 1000)))
-            ttk.Label(row, text="baud:").pack(side="left", padx=(2, 0))
+            ttk.Label(row, text="kbps:").pack(side="left", padx=(2, 0))
             kbps1_entry = tk.Entry(row, width=6, textvariable=kbps1_var)
             kbps1_entry.pack(side="left", padx=(2, 0))
 
@@ -1886,6 +2205,7 @@ class PicoGUI(tk.Tk):
         finally:
             self._last_refresh_time = time.time()
 
+    # --- I2C0 handlers ---
     def on_i2c0_sda_selected(self, val: str):
         """Select SDA pin for I2C0 (only pins currently in SDA0 appear in menu)."""
         if val == PinMode.UNUSED.value or val == "----":
@@ -2272,6 +2592,7 @@ class PicoGUI(tk.Tk):
             except Exception:
                 pass
 
+    # --- UART0 Handlers ---
     def on_uart0_tx_selected(self, val: str):
         """Select TX pin for UART0 (only pins currently in TX0 appear in menu)."""
         if val == PinMode.UNUSED.value or val == "----":
@@ -2290,7 +2611,8 @@ class PicoGUI(tk.Tk):
                 uart0.tx_pin = None
             except Exception:
                 pass
-            print("UART0 TX selection cleared")
+            #print("UART0 TX selection cleared")
+            self.send_pin_parameter(0, "uart0_tx", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2315,7 +2637,8 @@ class PicoGUI(tk.Tk):
                 uart0.tx_pin = pin
             except Exception:
                 pass
-            print(f"UART0 TX selected: GP{pin}")
+            #print(f"UART0 TX selected: GP{pin}")
+            self.send_pin_parameter(0, "uart0_tx", pin)
         else:
             self.uart0_tx_selected = None
             self.uart0_config['tx'] = None
@@ -2344,7 +2667,8 @@ class PicoGUI(tk.Tk):
                 uart0.rx_pin = None
             except Exception:
                 pass
-            print("UART0 RX selection cleared")
+            #print("UART0 RX selection cleared")
+            self.send_pin_parameter(0, "uart0_rx", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2369,7 +2693,8 @@ class PicoGUI(tk.Tk):
                 uart0.rx_pin = pin
             except Exception:
                 pass
-            print(f"UART0 RX selected: GP{pin}")
+            #print(f"UART0 RX selected: GP{pin}")
+            self.send_pin_parameter(0, "uart0_rx", pin)
         else:
             self.uart0_rx_selected = None
             self.uart0_config['rx'] = None
@@ -2386,54 +2711,62 @@ class PicoGUI(tk.Tk):
         self.uart0_config['send_text'] = text
         if not text:
             self.uart0_config['bytes_to_send'] = []
-            try:
-                uart0.bytes_to_send = []
-            except Exception:
-                pass
+            uart0.bytes_to_send = []
             return
-        try:
-            data = text.encode('utf-8')
-            uart0.bytes_to_send = list(data)
-            self.uart0_config['bytes_to_send'] = list(data)
-        except Exception:
-            data = b""
+        #try:
+        #    data = text.encode('utf-8')
+        #    uart0.bytes_to_send = list(data)
+        #    self.uart0_config['bytes_to_send'] = list(data)
+        #except Exception:
+        #    data = b""
         # simulate a response: echo back the same bytes
-        try:
-            uart0.received_bytes = data
-        except Exception:
-            pass
+        #try:
+        #    uart0.received_bytes = data
+        #except Exception:
+        #    pass
         # update received text display and persist
+        # try:
+        #     recv_text = (getattr(uart0, 'received_bytes', b'') or b'').decode('utf-8', errors='replace')
+        #     if hasattr(self, 'uart0_receive_var'):
+        #         self.uart0_receive_var.set(recv_text)
+        #     self.uart0_config['received_text'] = recv_text
+        # except Exception:
+        #     pass
+        print(f"UART0 send: {text}")
+        self.uart0_config['bytes_to_send'] = text
         try:
-            recv_text = (getattr(uart0, 'received_bytes', b'') or b'').decode('utf-8', errors='replace')
-            if hasattr(self, 'uart0_receive_var'):
-                self.uart0_receive_var.set(recv_text)
-            self.uart0_config['received_text'] = recv_text
+            uart0.bytes_to_send = text
         except Exception:
             pass
-        print(f"UART0 send: {text}")
+
+        self.send_pin_parameter(255, 'uart0_send', text)
+
 
     def update_uart0_baud(self, baud: int):
-        try:
-            uart0.baud = baud
-        except Exception:
-            pass
+        #try:
+        uart0.baud = baud
+        #except Exception:
+        #    pass
         self.uart0_config['baud'] = baud
-        print(f"UART0 baud set to {baud}")
+        #print(f"UART0 baud set to {baud}")
+        self.send_pin_parameter(255, 'uart0_baud', int(baud))
 
     def on_uart0_receive(self):
         rx = getattr(uart0, 'received_bytes', None)
-        if rx is None:
-            return
-        try:
-            txt = ' '.join(f"{b:02X}" for b in rx)
-        except Exception:
-            txt = ''
-        try:
-            self.uart0_config['received_text'] = (rx.decode('utf-8', errors='replace') if isinstance(rx, (bytes, bytearray)) else str(rx))
-            if hasattr(self, 'uart0_receive_var'):
-                self.uart0_receive_var.set(self.uart0_config['received_text'])
-        except Exception:
-            pass
+        self.uart0_receive_var.set(rx)
+
+        # if rx is None:
+        #     return
+        # try:
+        #     txt = ' '.join(f"{b:02X}" for b in rx)
+        # except Exception:
+        #     txt = ''
+        # try:
+        #     self.uart0_config['received_text'] = (rx.decode('utf-8', errors='replace') if isinstance(rx, (bytes, bytearray)) else str(rx))
+        #     if hasattr(self, 'uart0_receive_var'):
+        #         self.uart0_receive_var.set(self.uart0_config['received_text'])
+        # except Exception:
+        #     pass
 
     # --- UART1 handlers (mirror UART0) ---
     def on_uart1_tx_selected(self, val: str):
@@ -2453,7 +2786,8 @@ class PicoGUI(tk.Tk):
                 uart1.tx_pin = None
             except Exception:
                 pass
-            print("UART1 TX selection cleared")
+            #print("UART1 TX selection cleared")
+            self.send_pin_parameter(0, "uart1_tx", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2478,7 +2812,8 @@ class PicoGUI(tk.Tk):
                 uart1.tx_pin = pin
             except Exception:
                 pass
-            print(f"UART1 TX selected: GP{pin}")
+            #print(f"UART1 TX selected: GP{pin}")
+            self.send_pin_parameter(0, "uart1_tx", pin)
         else:
             self.uart1_tx_selected = None
             self.uart1_config['tx'] = None
@@ -2506,7 +2841,8 @@ class PicoGUI(tk.Tk):
                 uart1.rx_pin = None
             except Exception:
                 pass
-            print("UART1 RX selection cleared")
+            #print("UART1 RX selection cleared")
+            self.send_pin_parameter(0, "uart1_rx", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2531,7 +2867,8 @@ class PicoGUI(tk.Tk):
                 uart1.rx_pin = pin
             except Exception:
                 pass
-            print(f"UART1 RX selected: GP{pin}")
+            #print(f"UART1 RX selected: GP{pin}")
+            self.send_pin_parameter(0, "uart1_rx", pin)
         else:
             self.uart1_rx_selected = None
             self.uart1_config['rx'] = None
@@ -2543,411 +2880,34 @@ class PicoGUI(tk.Tk):
             print(f"UART1 RX selection invalid for {val}")
 
     def on_uart1_send(self, text: str):
+        """Send text over UART1 (persist and show simulated response)."""
         text = str(text or "")
         self.uart1_config['send_text'] = text
         if not text:
             self.uart1_config['bytes_to_send'] = []
-            try:
-                uart1.bytes_to_send = []
-            except Exception:
-                pass
+            uart1.bytes_to_send = []
             return
-        try:
-            data = text.encode('utf-8')
-            uart1.bytes_to_send = list(data)
-            self.uart1_config['bytes_to_send'] = list(data)
-        except Exception:
-            data = b""
-        try:
-            uart1.received_bytes = data
-        except Exception:
-            pass
-        try:
-            recv_text = (getattr(uart1, 'received_bytes', b'') or b'').decode('utf-8', errors='replace')
-            if hasattr(self, 'uart1_receive_var'):
-                self.uart1_receive_var.set(recv_text)
-            self.uart1_config['received_text'] = recv_text
-        except Exception:
-            pass
         print(f"UART1 send: {text}")
+        self.uart1_config['bytes_to_send'] = text
+        try:
+            uart1.bytes_to_send = text
+        except Exception:
+            pass
+
+        self.send_pin_parameter(255, 'uart1_send', text)
 
     def update_uart1_baud(self, baud: int):
-        try:
-            uart1.baud = baud
-        except Exception:
-            pass
+        #try:
+        uart1.baud = baud
+        #except Exception:
+        #    pass
         self.uart1_config['baud'] = baud
-        print(f"UART1 baud set to {baud}")
+        self.send_pin_parameter(255, 'uart1_baud', int(baud))
 
     def on_uart1_receive(self):
         rx = getattr(uart1, 'received_bytes', None)
-        if rx is None:
-            return
-        try:
-            self.uart1_config['received_text'] = (rx.decode('utf-8', errors='replace') if isinstance(rx, (bytes, bytearray)) else str(rx))
-            if hasattr(self, 'uart1_receive_var'):
-                self.uart1_receive_var.set(self.uart1_config['received_text'])
-        except Exception:
-            pass
+        self.uart1_receive_var.set(rx)
 
-    def on_spi0_send(self, text: str):
-        text = str(text).strip()
-        # persist the entered hex text so it survives UI refreshes
-        self.spi0_config['send_hex'] = text
-
-        if not text:
-            # also clear bytes_to_send
-            self.spi0_config['bytes_to_send'] = []
-            spi0.bytes_to_send = []
-            return
-
-        print(f"SPI0 send: {text}")
-        bytes_list = []
-        # text expected as space-separated hex bytes like "80 F1 2A" or "80F1 2A"
-        for part in text.split():
-            try:
-                byte = int(part, 16)
-                if 0 <= byte <= 255:
-                    bytes_list.append(byte)
-            except Exception:
-                pass
-        # store both in local config and (if available) the spi0 object
-        self.spi0_config['bytes_to_send'] = bytes_list
-        try:
-            spi0.bytes_to_send = bytes_list
-        except Exception:
-            pass
-
-        # debug-only response generation (if spi0 is present): invert bits
-        try:
-            spi0.received_bytes = [b ^ 0xFF for b in bytes_list]
-        except Exception:
-            pass
-
-        # update stored received bytes and update UI
-        if hasattr(self, 'spi0_receive_var'):
-            try:
-                hex_str = ' '.join(f"{b:02X}" for b in (getattr(spi0, 'received_bytes', []) or self.spi0_config.get('received_bytes') or []))
-                self.spi0_receive_var.set(hex_str)
-            except Exception:
-                pass
-        # persist received bytes in config
-        try:
-            self.spi0_config['received_bytes'] = list(getattr(spi0, 'received_bytes', self.spi0_config.get('received_bytes') or []))
-        except Exception:
-            pass
-
-    def update_spi0_speed(self, kbps: int):
-        spi0.kilobits_per_second = kbps
-        print(f"SPI0 speed set to {kbps} kbps")
-
-    
-    def on_spi0_receive_bytes(self):
-        """Update the SPI0 received bytes display from the spi0.received_bytes and persist."""
-        rx = getattr(spi0, 'received_bytes', None)
-        if rx is None:
-            # nothing to show
-            return
-        hex_str = ' '.join(f"{b:02X}" for b in rx)
-        # persist in config
-        try:
-            self.spi0_config['received_bytes'] = list(rx)
-        except Exception:
-            pass
-        if hasattr(self, "spi0_receive_var"):
-            try:
-                self.spi0_receive_var.set(hex_str)
-            except Exception:
-                pass
-
-    # --- SPI1 handlers (mirror SPI0 behavior) ---
-    def on_spi1_mosi_selected(self, val: str):
-        """Handle SPI1 MOSI selection (manual only)."""
-        if val == PinMode.UNUSED.value or val == "----":
-            self.spi1_mosi_selected = None
-            self.spi1_config['mosi'] = None
-            if hasattr(self, "spi1_mosi_var"):
-                try:
-                    self.spi1_mosi_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            try:
-                self.refresh_function_boxes()
-            except Exception:
-                pass
-            print("\tsend: SPI1 MOSI selection cleared")
-            try:
-                spi1.mosi_pin = None
-            except Exception:
-                pass
-            return
-        pin_str = str(val)
-        if pin_str.startswith("GP"):
-            pin_str = pin_str[2:]
-        try:
-            pin = int(pin_str)
-        except Exception:
-            return
-        if self.pins.get(pin) and self.pins[pin].mode == PinMode.MOSI1:
-            self.spi1_mosi_selected = pin
-            self.spi1_config['mosi'] = pin
-            if hasattr(self, "spi1_mosi_var"):
-                try:
-                    self.spi1_mosi_var.set(f"GP{pin}")
-                except Exception:
-                    pass
-            try:
-                self.refresh_function_boxes()
-            except Exception:
-                pass
-            print(f"\tsend: SPI1 MOSI selected: GP{pin}")
-            try:
-                spi1.mosi_pin = pin
-            except Exception:
-                pass
-        else:
-            self.spi1_mosi_selected = None
-            self.spi1_config['mosi'] = None
-            if hasattr(self, "spi1_mosi_var"):
-                try:
-                    self.spi1_mosi_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            print(f"SPI1 MOSI selection invalid for {val}")
-            try:
-                spi1.mosi_pin = None
-            except Exception:
-                pass
-
-    def on_spi1_miso_selected(self, val: str):
-        if val == PinMode.UNUSED.value or val == "----":
-            self.spi1_miso_selected = None
-            self.spi1_config['miso'] = None
-            if hasattr(self, "spi1_miso_var"):
-                try:
-                    self.spi1_miso_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            try:
-                self.refresh_function_boxes()
-            except Exception:
-                pass
-            print("\tsend: SPI1 MISO selection cleared")
-            try:
-                spi1.miso_pin = None
-            except Exception:
-                pass
-            return
-        pin_str = str(val)
-        if pin_str.startswith("GP"):
-            pin_str = pin_str[2:]
-        try:
-            pin = int(pin_str)
-        except Exception:
-            return
-        if self.pins.get(pin) and self.pins[pin].mode == PinMode.MISO1:
-            self.spi1_miso_selected = pin
-            self.spi1_config['miso'] = pin
-            if hasattr(self, "spi1_miso_var"):
-                try:
-                    self.spi1_miso_var.set(f"GP{pin}")
-                except Exception:
-                    pass
-            try:
-                self.refresh_function_boxes()
-            except Exception:
-                pass
-            print(f"\tsend: SPI1 MISO selected: GP{pin}")
-            try:
-                spi1.miso_pin = pin
-            except Exception:
-                pass
-        else:
-            self.spi1_miso_selected = None
-            self.spi1_config['miso'] = None
-            if hasattr(self, "spi1_miso_var"):
-                try:
-                    self.spi1_miso_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            print(f"SPI1 MISO selection invalid for {val}")
-            try:
-                spi1.miso_pin = None
-            except Exception:
-                pass
-
-    def on_spi1_sck_selected(self, val: str):
-        if val == PinMode.UNUSED.value or val == "----":
-            self.spi1_sck_selected = None
-            self.spi1_config['sck'] = None
-            if hasattr(self, "spi1_sck_var"):
-                try:
-                    self.spi1_sck_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            try:
-                self.refresh_function_boxes()
-            except Exception:
-                pass
-            print("\tsend: SPI1 SCK selection cleared")
-            try:
-                spi1.sck_pin = None
-            except Exception:
-                pass
-            return
-        pin_str = str(val)
-        if pin_str.startswith("GP"):
-            pin_str = pin_str[2:]
-        try:
-            pin = int(pin_str)
-        except Exception:
-            return
-        if self.pins.get(pin) and self.pins[pin].mode == PinMode.SCK1:
-            self.spi1_sck_selected = pin
-            self.spi1_config['sck'] = pin
-            if hasattr(self, "spi1_sck_var"):
-                try:
-                    self.spi1_sck_var.set(f"GP{pin}")
-                except Exception:
-                    pass
-            try:
-                self.refresh_function_boxes()
-            except Exception:
-                pass
-            print(f"\tsend: SPI1 SCK selected: GP{pin}")
-            try:
-                spi1.sck_pin = pin
-            except Exception:
-                pass
-        else:
-            self.spi1_sck_selected = None
-            self.spi1_config['sck'] = None
-            if hasattr(self, "spi1_sck_var"):
-                try:
-                    self.spi1_sck_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            print(f"\tsend: SPI1 SCK selection invalid for {val}")
-            try:
-                spi1.sck_pin = None
-            except Exception:
-                pass
-
-    def on_spi1_csn_selected(self, val: str):
-        if val == PinMode.UNUSED.value or val == "----":
-            self.spi1_csn = None
-            self.spi1_config['csn'] = None
-            if hasattr(self, "spi1_csn_var"):
-                try:
-                    self.spi1_csn_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            print("\tsend: SPI1 CSn selection cleared")
-            try:
-                spi1.csn_pin = None
-            except Exception:
-                pass
-            return
-        pin_str = str(val)
-        if pin_str.startswith("GP"):
-            pin_str = pin_str[2:]
-        try:
-            pin = int(pin_str)
-        except Exception:
-            return
-        if self.pins.get(pin) and self.pins[pin].mode == PinMode.DOUT:
-            self.spi1_csn = pin
-            self.spi1_config['csn'] = pin
-            if hasattr(self, "spi1_csn_var"):
-                try:
-                    self.spi1_csn_var.set(f"GP{pin}")
-                except Exception:
-                    pass
-            print(f"\tsend: SPI1 CSn set to pin {pin}")
-            try:
-                spi1.csn_pin = pin
-            except Exception:
-                pass
-        else:
-            self.spi1_csn = None
-            self.spi1_config['csn'] = None
-            if hasattr(self, "spi1_csn_var"):
-                try:
-                    self.spi1_csn_var.set(PinMode.UNUSED.value)
-                except Exception:
-                    pass
-            print(f"SPI1 CSn selection invalid (pin {val} not DOUT)")
-            try:
-                spi1.csn_pin = None
-            except Exception:
-                pass
-
-    def on_spi1_send(self, text: str):
-        text = str(text).strip()
-        self.spi1_config['send_hex'] = text
-        if not text:
-            self.spi1_config['bytes_to_send'] = []
-            try:
-                spi1.bytes_to_send = []
-            except Exception:
-                pass
-            return
-        print(f"\tsend: SPI1 send: {text}")
-        bytes_list = []
-        for part in text.split():
-            try:
-                byte = int(part, 16)
-                if 0 <= byte <= 255:
-                    bytes_list.append(byte)
-            except Exception:
-                pass
-        self.spi1_config['bytes_to_send'] = bytes_list
-        try:
-            spi1.bytes_to_send = bytes_list
-        except Exception:
-            pass
-        # debug response
-        try:
-            spi1.received_bytes = [b ^ 0xFF for b in bytes_list]
-        except Exception:
-            pass
-        try:
-            hex_str = ' '.join(f"{b:02X}" for b in (getattr(spi1, 'received_bytes', []) or self.spi1_config.get('received_bytes') or []))
-            if hasattr(self, 'spi1_receive_var'):
-                self.spi1_receive_var.set(hex_str)
-        except Exception:
-            pass
-        try:
-            self.spi1_config['received_bytes'] = list(getattr(spi1, 'received_bytes', self.spi1_config.get('received_bytes') or []))
-        except Exception:
-            pass
-
-    def update_spi1_speed(self, kbps: int):
-        try:
-            spi1.kilobits_per_second = kbps
-        except Exception:
-            pass
-        self.spi1_config['kbps'] = kbps
-        print(f"\tsend: SPI1 speed set to {kbps} kbps")
-
-    def on_spi1_receive_bytes(self):
-        rx = getattr(spi1, 'received_bytes', None)
-        if rx is None:
-            return
-        hex_str = ' '.join(f"{b:02X}" for b in rx)
-        try:
-            self.spi1_config['received_bytes'] = list(rx)
-        except Exception:
-            pass
-        if hasattr(self, "spi1_receive_var"):
-            try:
-                self.spi1_receive_var.set(hex_str)
-            except Exception:
-                pass
-
-    def update_spi0_speed(self, kbps: int):
-        spi0.kilobits_per_second = kbps
-        print(f"\tsend: SPI0 speed set to {kbps} kbps")
 
 
 
