@@ -167,9 +167,13 @@ def reinit_uart0():
         bits=8,
         parity=None,
         stop=1,
-        tx=pins[uart0_tx_pin],
-        rx=pins[uart0_rx_pin],
     )
+
+    # Only include pins that are set
+    if uart0_rx_pin is not None:
+        kwargs["rx"] = pins[uart0_rx_pin]
+    if uart0_tx_pin is not None:
+        kwargs["tx"] = pins[uart0_tx_pin]
 
     try:
         uart0 = UART(0, **kwargs)
@@ -199,9 +203,13 @@ def reinit_uart1():
         bits=8,
         parity=None,
         stop=1,
-        tx=pins[uart1_tx_pin],
-        rx=pins[uart1_rx_pin],
     )
+
+    # Only include pins that are set
+    if uart1_rx_pin is not None:
+        kwargs["rx"] = pins[uart1_rx_pin]
+    if uart1_tx_pin is not None:
+        kwargs["tx"] = pins[uart1_tx_pin]
 
     try:
         uart1 = UART(1, **kwargs)
@@ -210,6 +218,62 @@ def reinit_uart1():
         uart1 = None
         print(f"255,uart1_config,failed,{repr(e)}")
 
+
+def poll_uart0():
+    if uart0 is None:
+        return
+    if uart0_rx_pin is None:
+        return
+
+    try:
+        n = uart0.any()
+    except Exception:
+        return
+
+    if not n:
+        return
+
+    # Read at most 256 bytes per loop to avoid starving other work
+    to_read = 256 if n > 256 else n
+    try:
+        data = uart0.read(to_read)
+    except Exception:
+        return
+
+    if data:
+        try:
+            text = data.decode("ascii")
+        except Exception:
+            text = "[decode error]"
+        print(f"255,uart0_recv,{text}")
+
+def poll_uart1():
+    if uart1 is None:
+        return
+    if uart1_rx_pin is None:
+        return
+
+    try:
+        n = uart1.any()
+    except Exception:
+        return
+
+    if not n:
+        return
+
+    # Read at most 256 bytes per loop to avoid starving other work
+    to_read = 256 if n > 256 else n
+    try:
+        data = uart1.read(to_read)
+    except Exception:
+        return
+
+    if data:
+        try:
+            text = data.decode("ascii")
+        except Exception:
+            text = "[decode error]"
+        print(f"255,uart1_recv,{text}")
 
 
 sync_start = time.ticks_ms()
@@ -519,8 +583,6 @@ while True:
                     print(f"255,spi1_recv,{recv_hex}")
                 
 
-                
-
                 elif param == "uart0_tx":
                     v = int(value)
                     uart0_tx_pin = None if v == 255 else v
@@ -541,7 +603,18 @@ while True:
                         print("255,uart0_recv,error_not_configured")
                         continue
 
-                    uart0.write(value)
+                    if len(value) > 2 and value[:2] == "0x":
+                        # interpret as hexadecimal
+                        value = value[2:]
+                        try:
+                            hex_string = bytes.fromhex(value)
+                        except Exception as e:
+                            print(f"255,uart0_send,failed,{repr(e)}")
+                            continue
+                        uart0.write(hex_string)
+                    else:
+                        # interpret as an ascii string
+                        uart0.write(value)
                 
                 elif param == "uart1_tx":
                     v = int(value)
@@ -563,13 +636,26 @@ while True:
                         print("255,uart1_recv,error_not_configured")
                         continue
                     
-                    uart1.write(value)
+                    if len(value) > 2 and value[:2] == "0x":
+                        # interpret as hexadecimal
+                        value = value[2:]
+                        try:
+                            hex_string = bytes.fromhex(value)
+                        except Exception as e:
+                            print(f"255,uart1_send,failed,{repr(e)}")
+                            continue
+                        uart1.write(hex_string)
+                    else:
+                        # interpret as an ascii string
+                        uart1.write(value)
 
                     
             #except Exception as e:
             #    print(f"Error reading line: {e}")
     
     # Perform other tasks here
+    poll_uart0()
+    poll_uart1()
     # if time > 100ms, send updates
     now = time.ticks_ms()
     if time.ticks_diff(now, sync_start) > 100:
