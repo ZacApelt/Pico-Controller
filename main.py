@@ -58,6 +58,14 @@ uart0_rx_pin = None
 uart1_tx_pin = None
 uart1_rx_pin = None
 
+i2c0 = None
+i2c1 = None
+i2c0_freq = 100_000
+i2c1_freq = 100_000
+i2c0_sda_pin = None
+i2c0_scl_pin = None
+i2c1_sda_pin = None
+i2c1_scl_pin = None
 
 
 def reinit_spi0():
@@ -101,7 +109,6 @@ def reinit_spi0():
     except Exception as e:
         spi0 = None
         print(f"255,spi0_config,failed,{repr(e)}")
-
 
 def reinit_spi1():
     global spi1
@@ -217,6 +224,74 @@ def reinit_uart1():
     except Exception as e:
         uart1 = None
         print(f"255,uart1_config,failed,{repr(e)}")
+
+
+def reinit_i2c0():
+    global i2c0
+
+    # Need both sda and scl
+    if i2c0_sda_pin is None or i2c0_scl_pin is None:
+        # i2c0 unusable
+        i2c0 = None
+        print("255,i2c0_config,incomplete,no_i2c0_pins")
+        return
+
+    try:
+        if i2c0 is not None:
+            i2c0.deinit()
+    except Exception:
+        pass
+
+    kwargs = dict(
+        freq=i2c0_freq,
+    )
+
+    # Only include pins that are set
+    if i2c0_sda_pin is not None:
+        kwargs["sda"] = pins[i2c0_sda_pin]
+    if i2c0_scl_pin is not None:
+        kwargs["scl"] = pins[i2c0_scl_pin]
+
+    try:
+        i2c0 = I2C(0, **kwargs)
+        print(f"255,i2c0_config,ok,sda={i2c0_sda_pin},scl={i2c0_scl_pin},freq={i2c0_freq}")
+    except Exception as e:
+        i2c0 = None
+        print(f"255,i2c0_config,failed,{repr(e)}")
+
+def reinit_i2c1():
+    global i2c1
+
+    # Need both sda and scl
+    if i2c1_sda_pin is None or i2c1_scl_pin is None:
+        # i2c1 unusable
+        i2c1 = None
+        print("255,i2c1_config,incomplete,no_i2c1_pins")
+        return
+
+    try:
+        if i2c1 is not None:
+            i2c1.deinit()
+    except Exception:
+        pass
+
+    kwargs = dict(
+        freq=i2c1_freq,
+    )
+
+    # Only include pins that are set
+    if i2c1_sda_pin is not None:
+        kwargs["sda"] = pins[i2c1_sda_pin]
+    if i2c1_scl_pin is not None:
+        kwargs["scl"] = pins[i2c1_scl_pin]
+
+    try:
+        i2c1 = I2C(1, **kwargs)
+        print(f"255,i2c1_config,ok,sda={i2c1_sda_pin},scl={i2c1_scl_pin},freq={i2c1_freq}")
+    except Exception as e:
+        i2c1 = None
+        print(f"255,i2c1_config,failed,{repr(e)}")
+
 
 
 def poll_uart0():
@@ -649,6 +724,57 @@ while True:
                         # interpret as an ascii string
                         uart1.write(value)
 
+
+                elif param == "i2c0_sda":
+                    v = int(value)
+                    i2c0_sda_pin = None if v == 255 else v
+                    reinit_i2c0()
+
+                elif param == "i2c0_scl":
+                    v = int(value)
+                    i2c0_scl_pin = None if v == 255 else v
+                    reinit_i2c0()
+
+                elif param == "i2c0_freq":
+                    i2c0_freq = int(value)
+                    reinit_i2c0()
+
+                elif "i2c0_send" in param:
+                    # looks like i2c0_send:71
+                    # where 71 is the address
+
+                    address = int(param.split(":")[1])
+
+                    # value is string
+                    if i2c0 is None:
+                        print("255,i2c0_recv,error_not_configured")
+                        continue
+
+                    if len(value) > 2 and value[:2] == "0x":
+                        # interpret as hexadecimal
+                        value = value[2:]
+                        try:
+                            hex_string = bytes.fromhex(value)
+                        except Exception as e:
+                            print(f"255,uart0_send,failed,{repr(e)}")
+                            continue
+                        try:
+                            i2c0.writeto(address, hex_string)
+                        except Exception as e:
+                            print(f"255,i2c0_error,transaction_failed,{repr(e)}")
+                    else:
+                        # interpret as an ascii string
+                        try:
+                            i2c0.writeto(address, value.encode("utf-8"))
+                        except Exception as e:
+                            print(f"255,i2c0_error,transaction_failed,{repr(e)}")
+
+                elif param == "i2c0_scan":
+                    if i2c0 is not None:
+                        addresses = i2c0.scan()
+                        print(f"0,i2c0_addresses,{addresses}")
+                    else:
+                        print("255, i2c0_scan,error_not_configured")
                     
             #except Exception as e:
             #    print(f"Error reading line: {e}")

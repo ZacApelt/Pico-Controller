@@ -380,6 +380,10 @@ class PicoGUI(tk.Tk):
             elif param == "uart1_recv":
                 uart1.received_bytes = value
                 self.on_uart1_receive()
+            elif param == "i2c0_addresses":
+                self.on_i2c0_scan_result(eval(value))
+            elif param == "i2c1_addresses":
+                self.on_i2c1_scan_result(eval(value))
 
     # ---------- layout ----------
 
@@ -1686,22 +1690,22 @@ class PicoGUI(tk.Tk):
             i2c0_send_entry.pack(side="left", padx=(4, 0))
             i2c0_send_entry.bind("<Return>", lambda e: self.on_i2c0_send(self.i2c0_addr_var.get(), self.i2c0_send_var.get()))
 
-            ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
-            saved_recv = None
-            if self.i2c0_config.get('received_bytes'):
-                saved_recv = ' '.join(f"{b:02X}" for b in self.i2c0_config['received_bytes'])
+            # ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
+            # saved_recv = None
+            # if self.i2c0_config.get('received_bytes'):
+            #     saved_recv = ' '.join(f"{b:02X}" for b in self.i2c0_config['received_bytes'])
 
-            if hasattr(self, 'i2c0_receive_var'):
-                try:
-                    if saved_recv is not None:
-                        self.i2c0_receive_var.set(saved_recv)
-                except Exception:
-                    pass
-            else:
-                self.i2c0_receive_var = tk.StringVar(value=saved_recv if saved_recv is not None else "")
+            # if hasattr(self, 'i2c0_receive_var'):
+            #     try:
+            #         if saved_recv is not None:
+            #             self.i2c0_receive_var.set(saved_recv)
+            #     except Exception:
+            #         pass
+            # else:
+            #     self.i2c0_receive_var = tk.StringVar(value=saved_recv if saved_recv is not None else "")
 
-            i2c0_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c0_receive_var, state="readonly")
-            i2c0_receive_entry.pack(side="left", padx=(4, 0))
+            # i2c0_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c0_receive_var, state="readonly")
+            # i2c0_receive_entry.pack(side="left", padx=(4, 0))
 
         # I2C1 (mirror)
         if i2c1_pins:
@@ -1788,22 +1792,22 @@ class PicoGUI(tk.Tk):
             i2c1_send_entry.pack(side="left", padx=(4, 0))
             i2c1_send_entry.bind("<Return>", lambda e: self.on_i2c1_send(self.i2c1_addr_var.get(), self.i2c1_send_var.get()))
 
-            ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
-            saved1_recv = None
-            if self.i2c1_config.get('received_bytes'):
-                saved1_recv = ' '.join(f"{b:02X}" for b in self.i2c1_config['received_bytes'])
+            # ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))
+            # saved1_recv = None
+            # if self.i2c1_config.get('received_bytes'):
+            #     saved1_recv = ' '.join(f"{b:02X}" for b in self.i2c1_config['received_bytes'])
 
-            if hasattr(self, 'i2c1_receive_var'):
-                try:
-                    if saved1_recv is not None:
-                        self.i2c1_receive_var.set(saved1_recv)
-                except Exception:
-                    pass
-            else:
-                self.i2c1_receive_var = tk.StringVar(value=saved1_recv if saved1_recv is not None else "")
+            # if hasattr(self, 'i2c1_receive_var'):
+            #     try:
+            #         if saved1_recv is not None:
+            #             self.i2c1_receive_var.set(saved1_recv)
+            #     except Exception:
+            #         pass
+            # else:
+            #     self.i2c1_receive_var = tk.StringVar(value=saved1_recv if saved1_recv is not None else "")
 
-            i2c1_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c1_receive_var, state="readonly")
-            i2c1_receive_entry.pack(side="left", padx=(4, 0))
+            # i2c1_receive_entry = tk.Entry(row2, width=50, textvariable=self.i2c1_receive_var, state="readonly")
+            # i2c1_receive_entry.pack(side="left", padx=(4, 0))
 
     def update_UART(self, uart0_pins: list[int], uart1_pins: list[int]):
         box = ttk.LabelFrame(self.fn_container, text="UART", padding=8)
@@ -2224,7 +2228,8 @@ class PicoGUI(tk.Tk):
                 i2c0.sda_pin = None
             except Exception:
                 pass
-            print("I2C0 SDA selection cleared")
+            #print("I2C0 SDA selection cleared")
+            self.send_pin_parameter(0, "i2c0_sda", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2249,7 +2254,8 @@ class PicoGUI(tk.Tk):
                 i2c0.sda_pin = pin
             except Exception:
                 pass
-            print(f"I2C0 SDA selected: GP{pin}")
+            #print(f"I2C0 SDA selected: GP{pin}")
+            self.send_pin_parameter(0, "i2c0_sda", pin)
         else:
             self.i2c0_sda_selected = None
             self.i2c0_config['sda'] = None
@@ -2278,7 +2284,8 @@ class PicoGUI(tk.Tk):
                 i2c0.scl_pin = None
             except Exception:
                 pass
-            print("I2C0 SCL selection cleared")
+            #print("I2C0 SCL selection cleared")
+            self.send_pin_parameter(0, "i2c0_scl", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2303,7 +2310,8 @@ class PicoGUI(tk.Tk):
                 i2c0.scl_pin = pin
             except Exception:
                 pass
-            print(f"I2C0 SCL selected: GP{pin}")
+            #print(f"I2C0 SCL selected: GP{pin}")
+            self.send_pin_parameter(0, "i2c0_scl", pin)
         else:
             self.i2c0_scl_selected = None
             self.i2c0_config['scl'] = None
@@ -2316,21 +2324,7 @@ class PicoGUI(tk.Tk):
 
     def on_i2c0_scan(self):
         """Simulate a simple I2C scan and show found addresses in hex."""
-        # Simple simulation: if both SDA and SCL are selected, pretend we found a couple of devices
-        found = []
-        if self.i2c0_sda_selected is not None and self.i2c0_scl_selected is not None:
-            found = [0x3C, 0x50]
-        elif self.i2c0_sda_selected is not None or self.i2c0_scl_selected is not None:
-            found = [0x50]
-        if not found:
-            txt = "No devices found"
-        else:
-            txt = 'Found: ' + ' '.join(f"0x{a:02X}" for a in found)
-        try:
-            self.i2c0_scan_var.set(txt)
-        except Exception:
-            pass
-        print(f"I2C0 scan result: {txt}")
+        self.send_pin_parameter(0, "i2c0_scan", 255)
 
     def on_i2c0_send(self, addr_text: str, text: str):
         """Send bytes to an I2C address (persist address and send hex)."""
@@ -2342,68 +2336,38 @@ class PicoGUI(tk.Tk):
 
         if not text:
             self.i2c0_config['bytes_to_send'] = []
-            try:
-                i2c0.bytes_to_send = []
-            except Exception:
-                pass
+            i2c0.bytes_to_send = []
             return
 
-        # parse send hex similar to SPI
-        bytes_list = []
-        for part in text.split():
-            try:
-                byte = int(part, 16)
-                if 0 <= byte <= 255:
-                    bytes_list.append(byte)
-            except Exception:
-                pass
-        self.i2c0_config['bytes_to_send'] = bytes_list
-        try:
-            i2c0.bytes_to_send = bytes_list
-        except Exception:
-            pass
-
-        # simulate response: invert bits of each byte
-        try:
-            i2c0.received_bytes = [b ^ 0xFF for b in bytes_list]
-        except Exception:
-            pass
-
-        # update recv display and persist
-        if hasattr(self, 'i2c0_receive_var'):
-            try:
-                hex_str = ' '.join(f"{b:02X}" for b in (getattr(i2c0, 'received_bytes', []) or self.i2c0_config.get('received_bytes') or []))
-                self.i2c0_receive_var.set(hex_str)
-            except Exception:
-                pass
-        try:
-            self.i2c0_config['received_bytes'] = list(getattr(i2c0, 'received_bytes', self.i2c0_config.get('received_bytes') or []))
-        except Exception:
-            pass
         print(f"I2C0 send to {addr_text}: {text}")
 
-    def update_i2c0_speed(self, khz: int):
         try:
-            i2c0.frequency_khz = khz
+            i2c0.bytes_to_send = text
         except Exception:
             pass
+
+        self.send_pin_parameter(255, f"i2c0_send:{addr_text}", text)
+
+    def on_i2c0_scan_result(self, addresses):
+        # addresses as a list
+        if addresses is None:
+            text = "No devices found"
+        else:
+            text = 'Found: ' + ' '.join(f"0x{a:02X}" for a in addresses)
+        try:
+            self.i2c0_scan_var.set(text)
+        except Exception:
+            pass
+
+    def update_i2c0_speed(self, khz: int):
+        i2c0.frequency_khz = khz
         self.i2c0_config['khz'] = khz
-        print(f"I2C0 frequency set to {khz} kHz")
+        #print(f"I2C0 frequency set to {khz} kHz")
+        self.send_pin_parameter(255, 'i2c0_khz', int(khz))
 
     def on_i2c0_receive_bytes(self):
         rx = getattr(i2c0, 'received_bytes', None)
-        if rx is None:
-            return
-        hex_str = ' '.join(f"{b:02X}" for b in rx)
-        try:
-            self.i2c0_config['received_bytes'] = list(rx)
-        except Exception:
-            pass
-        if hasattr(self, "i2c0_receive_var"):
-            try:
-                self.i2c0_receive_var.set(hex_str)
-            except Exception:
-                pass
+        self.i2c0_receive_var.set(rx)
 
     # --- I2C1 handlers (mirror I2C0) ---
     def on_i2c1_sda_selected(self, val: str):
@@ -2423,7 +2387,8 @@ class PicoGUI(tk.Tk):
                 i2c1.sda_pin = None
             except Exception:
                 pass
-            print("I2C1 SDA selection cleared")
+            #print("I2C1 SDA selection cleared")
+            self.send_pin_parameter(0, "i2c1_sda", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2448,7 +2413,8 @@ class PicoGUI(tk.Tk):
                 i2c1.sda_pin = pin
             except Exception:
                 pass
-            print(f"I2C1 SDA selected: GP{pin}")
+            #print(f"I2C1 SDA selected: GP{pin}")
+            self.send_pin_parameter(0, "i2c1_sda", pin)
         else:
             self.i2c1_sda_selected = None
             self.i2c1_config['sda'] = None
@@ -2476,7 +2442,8 @@ class PicoGUI(tk.Tk):
                 i2c1.scl_pin = None
             except Exception:
                 pass
-            print("I2C1 SCL selection cleared")
+            #print("I2C1 SCL selection cleared")
+            self.send_pin_parameter(0, "i2c1_scl", 255)
             return
         pin_str = str(val)
         if pin_str.startswith("GP"):
@@ -2501,7 +2468,8 @@ class PicoGUI(tk.Tk):
                 i2c1.scl_pin = pin
             except Exception:
                 pass
-            print(f"I2C1 SCL selected: GP{pin}")
+            #print(f"I2C1 SCL selected: GP{pin}")
+            self.send_pin_parameter(0, "i2c1_scl", pin)
         else:
             self.i2c1_scl_selected = None
             self.i2c1_config['scl'] = None
@@ -2513,84 +2481,49 @@ class PicoGUI(tk.Tk):
             print(f"I2C1 SCL selection invalid for {val}")
 
     def on_i2c1_scan(self):
-        found = []
-        if self.i2c1_sda_selected is not None and self.i2c1_scl_selected is not None:
-            found = [0x3C, 0x50]
-        elif self.i2c1_sda_selected is not None or self.i2c1_scl_selected is not None:
-            found = [0x50]
-        if not found:
-            txt = "No devices found"
-        else:
-            txt = 'Found: ' + ' '.join(f"0x{a:02X}" for a in found)
-        try:
-            self.i2c1_scan_var.set(txt)
-        except Exception:
-            pass
-        print(f"I2C1 scan result: {txt}")
+        self.send_pin_parameter(0, "i2c1_scan", 255)
 
     def on_i2c1_send(self, addr_text: str, text: str):
         addr_text = str(addr_text).strip()
         text = str(text).strip()
+        # persist address and send text
         self.i2c1_config['address'] = addr_text
         self.i2c1_config['send_hex'] = text
+
         if not text:
             self.i2c1_config['bytes_to_send'] = []
-            try:
-                i2c1.bytes_to_send = []
-            except Exception:
-                pass
+            i2c1.bytes_to_send = []
             return
-        bytes_list = []
-        for part in text.split():
-            try:
-                byte = int(part, 16)
-                if 0 <= byte <= 255:
-                    bytes_list.append(byte)
-            except Exception:
-                pass
-        self.i2c1_config['bytes_to_send'] = bytes_list
-        try:
-            i2c1.bytes_to_send = bytes_list
-        except Exception:
-            pass
-        try:
-            i2c1.received_bytes = [b ^ 0xFF for b in bytes_list]
-        except Exception:
-            pass
-        try:
-            hex_str = ' '.join(f"{b:02X}" for b in (getattr(i2c1, 'received_bytes', []) or self.i2c1_config.get('received_bytes') or []))
-            if hasattr(self, 'i2c1_receive_var'):
-                self.i2c1_receive_var.set(hex_str)
-        except Exception:
-            pass
-        try:
-            self.i2c1_config['received_bytes'] = list(getattr(i2c1, 'received_bytes', self.i2c1_config.get('received_bytes') or []))
-        except Exception:
-            pass
+
         print(f"I2C1 send to {addr_text}: {text}")
 
-    def update_i2c1_speed(self, khz: int):
         try:
-            i2c1.frequency_khz = khz
+            i2c1.bytes_to_send = text
         except Exception:
             pass
+
+        self.send_pin_parameter(255, f"i2c1_send:{addr_text}", text)
+
+    def update_i2c1_speed(self, khz: int):
+        i2c1.frequency_khz = khz
         self.i2c1_config['khz'] = khz
-        print(f"I2C1 frequency set to {khz} kHz")
+        #print(f"I2C1 frequency set to {khz} kHz")
+        self.send_pin_parameter(255, 'i2c1_khz', int(khz))
+
+    def on_i2c1_scan_result(self, addresses):
+        # addresses as a list
+        if addresses is None:
+            text = "No devices found"
+        else:
+            text = 'Found: ' + ' '.join(f"0x{a:02X}" for a in addresses)
+        try:
+            self.i2c1_scan_var.set(text)
+        except Exception:
+            pass
 
     def on_i2c1_receive_bytes(self):
         rx = getattr(i2c1, 'received_bytes', None)
-        if rx is None:
-            return
-        hex_str = ' '.join(f"{b:02X}" for b in rx)
-        try:
-            self.i2c1_config['received_bytes'] = list(rx)
-        except Exception:
-            pass
-        if hasattr(self, "i2c1_receive_var"):
-            try:
-                self.i2c1_receive_var.set(hex_str)
-            except Exception:
-                pass
+        self.i2c1_receive_var.set(rx)
 
     # --- UART0 Handlers ---
     def on_uart0_tx_selected(self, val: str):
