@@ -586,7 +586,7 @@ class PicoGUI(tk.Tk):
         self.update_I2C(groups["I2C0"], groups["I2C1"]) 
         self.update_UART(groups["UART0"], groups["UART1"]) 
 
-        self.add_right_panel_image(self.fn_container, r"C:/Users/zacap/Documents/projects/pico controller/Pico-Controller/raspberry_pi_Pico-R3-Pinout-narrow.png", max_width=420)
+        self.add_right_panel_image(self.fn_container, r"raspberry_pi_Pico-R3-Pinout-narrow.png", max_width=420)
         
 
     def update_DOUT(self, pins: list[int]):
