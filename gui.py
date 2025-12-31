@@ -229,8 +229,9 @@ class ScrollableFrame(ttk.Frame):
 class PicoGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Pico GPIO Control")
+        self.title("Pico Controller")
         self.geometry("1150x650")
+        self.iconbitmap("picoIcon.ico")
 
         # state: pin number -> Pin
         self.pins = {n: Pin(num=n) for n in PIN_MODES.keys()}
@@ -270,6 +271,8 @@ class PicoGUI(tk.Tk):
         self.spi1_sck_selected = None
         self.spi1_csn = None
         self.spi1_config = {"mosi": None, "miso": None, "sck": None, "csn": None, "kbps": 1000, "send_hex": None, "received_bytes": None, "bytes_to_send": []}
+        self.spi1_hex_var = tk.IntVar(value=1)   # default to Hex ON (change to 0 if you prefer)
+        self.spi1_config["send_is_hex"] = True
 
         # I2C selections and config (I2C0 and I2C1)
         self.i2c0_sda_selected = None
@@ -286,10 +289,14 @@ class PicoGUI(tk.Tk):
         self.uart0_tx_selected = None
         self.uart0_rx_selected = None
         self.uart0_config = {"tx": None, "rx": None, "baud": 115200, "send_text": None, "received_text": None, "bytes_to_send": []}
+        self.uart0_hex_var = tk.IntVar(value=0)   # default to Hex ON (change to 0 if you prefer)
+        self.uart0_config["send_is_hex"] = True
 
         self.uart1_tx_selected = None
         self.uart1_rx_selected = None
         self.uart1_config = {"tx": None, "rx": None, "baud": 115200, "send_text": None, "received_text": None, "bytes_to_send": []}
+        self.uart1_hex_var = tk.IntVar(value=0)   # default to Hex ON (change to 0 if you prefer)
+        self.uart1_config["send_is_hex"] = True
 
         # COM port state for serial device selection
         self.com_port_selected = None
@@ -484,6 +491,34 @@ class PicoGUI(tk.Tk):
         mode_menu.config(width=MODE_MENU_WIDTH)
         mode_menu.pack(side="left", padx=(6, 6))
 
+    def add_right_panel_image(self, parent_frame, image_path, max_width=380):
+        """
+        parent_frame should be the *scrollable content frame* inside the right panel.
+        Call this after you've created all the UART widgets so it ends up at the bottom.
+        """
+        # Load
+        img = Image.open(image_path)
+
+        # Optional: scale down to fit panel width
+        if max_width is not None and img.width > max_width:
+            scale = max_width / img.width * 1.55
+            new_size = (int(img.width * scale), int(img.height * scale))
+            img = img.resize(new_size, Image.LANCZOS)
+
+        photo = ImageTk.PhotoImage(img)
+
+        # Create label at the end of the panel
+        lbl = ttk.Label(parent_frame, image=photo)
+        lbl.pack(side="top", anchor="w", pady=(10, 10))
+
+        # IMPORTANT: keep a reference so it doesn't get garbage collected
+        lbl.image = photo
+
+        # Also store a reference on self if you rebuild the UI often
+        self._right_panel_images = getattr(self, "_right_panel_images", [])
+        self._right_panel_images.append(photo)
+
+        return lbl
     # ---------- logic / UI updates ----------
 
     def on_mode_changed(self, pin: int):
@@ -550,6 +585,8 @@ class PicoGUI(tk.Tk):
         self.update_SPI(groups["SPI0"], groups["SPI1"])
         self.update_I2C(groups["I2C0"], groups["I2C1"]) 
         self.update_UART(groups["UART0"], groups["UART1"]) 
+
+        self.add_right_panel_image(self.fn_container, r"C:/Users/zacap/Documents/projects/pico controller/Pico-Controller/raspberry_pi_Pico-R3-Pinout-narrow.png", max_width=420)
         
 
     def update_DOUT(self, pins: list[int]):
@@ -1186,25 +1223,51 @@ class PicoGUI(tk.Tk):
                 pass
 
     def on_spi1_send(self, text: str):
-        text = str(text).strip()
-        # persist the entered hex text so it survives UI refreshes
-        self.spi1_config['send_hex'] = text
+        text = str(text)
 
-        if not text:
-            # also clear bytes_to_send
-            self.spi1_config['bytes_to_send'] = []
-            spi1.bytes_to_send = []
+        is_hex = bool(self.spi1_hex_var.get())
+        self.spi1_config["send_is_hex"] = is_hex
+
+        if not text.strip():
+            self.spi1_config["bytes_to_send"] = []
+            try:
+                spi1.bytes_to_send = []
+            except Exception:
+                pass
             return
 
-        print(f"SPI1 send: {text}")
-        # store both in local config and (if available) the spi1 object
-        self.spi1_config['bytes_to_send'] = text
-        try:
-            spi1.bytes_to_send = text
-        except Exception:
-            pass
+        if is_hex:
+            # store raw text for UI persistence
+            self.spi1_config["send_hex"] = text.strip()
 
-        self.send_pin_parameter(255, 'spi1_send', text)
+            try:
+                hex_str = self._normalise_hex(text)
+            except Exception as e:
+                print(f"SPI1 send hex parse error: {repr(e)}")
+                return
+
+            print(f"SPI1 send HEX: {hex_str}")
+            self.spi1_config["bytes_to_send"] = hex_str
+            try:
+                spi1.bytes_to_send = hex_str
+            except Exception:
+                pass
+
+            self.send_pin_parameter(255, "spi1_send_hex", hex_str)
+
+        else:
+            # ASCII mode
+            ascii_str = text  # keep spaces etc.
+            self.spi1_config["send_ascii"] = ascii_str
+
+            print(f"SPI1 send ASCII: {ascii_str!r}")
+            self.spi1_config["bytes_to_send"] = ascii_str
+            try:
+                spi1.bytes_to_send = ascii_str
+            except Exception:
+                pass
+
+            self.send_pin_parameter(255, "spi1_send_ascii", ascii_str)
 
     def update_spi1_speed(self, kbps: int):
         spi1.kilobits_per_second = kbps
@@ -1624,7 +1687,17 @@ class PicoGUI(tk.Tk):
             # Send entry on its own line below other SPI1 controls
             row2 = ttk.Frame(spi1_box)
             row2.pack(fill="x", pady=(6, 0))
-            ttk.Label(row2, text="Send Hex:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            # SPI0 Hex checkbox (persistent)
+            hex_check = ttk.Checkbutton(
+                row2,
+                text="Hex",
+                variable=self.spi1_hex_var,
+                command=lambda: self.spi1_config.__setitem__("send_is_hex", bool(self.spi1_hex_var.get()))
+            )
+            hex_check.pack(side="left", padx=(10, 0))
+
+            ttk.Label(row2, text="Send:", width=9, anchor="w").pack(side="left", padx=(8, 0))
 
             # initialize or reuse StringVar so value persists across UI refreshes
             saved1_send = self.spi1_config.get('send_hex', '')
@@ -1932,7 +2005,17 @@ class PicoGUI(tk.Tk):
             # Row2: send / received (text)
             row2 = ttk.Frame(uart0_box)
             row2.pack(fill="x", pady=(6, 0))
-            ttk.Label(row2, text="Send Text:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            # uart0 Hex checkbox (persistent)
+            hex_check = ttk.Checkbutton(
+                row2,
+                text="Hex",
+                variable=self.uart0_hex_var,
+                command=lambda: self.uart0_config.__setitem__("send_is_hex", bool(self.uart0_hex_var.get()))
+            )
+            hex_check.pack(side="left", padx=(10, 0))
+
+            ttk.Label(row2, text="Send:", width=6, anchor="w").pack(side="left", padx=(8, 0))
 
             saved_send = self.uart0_config.get('send_text', '')
             if hasattr(self, 'uart0_send_var'):
@@ -2009,7 +2092,16 @@ class PicoGUI(tk.Tk):
 
             row2 = ttk.Frame(uart1_box)
             row2.pack(fill="x", pady=(6, 0))
-            ttk.Label(row2, text="Send Text:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            hex_check = ttk.Checkbutton(
+                row2,
+                text="Hex",
+                variable=self.uart1_hex_var,
+                command=lambda: self.uart1_config.__setitem__("send_is_hex", bool(self.uart1_hex_var.get()))
+            )
+            hex_check.pack(side="left", padx=(10, 0))
+
+            ttk.Label(row2, text="Send:", width=6, anchor="w").pack(side="left", padx=(8, 0))
 
             saved1_send = self.uart1_config.get('send_text', '')
             if hasattr(self, 'uart1_send_var'):
@@ -2707,38 +2799,55 @@ class PicoGUI(tk.Tk):
     def on_uart0_send(self, text: str):
         """Send text over UART0 (persist and show simulated response)."""
         text = str(text or "")
-        self.uart0_config['send_text'] = text
-        if not text:
-            self.uart0_config['bytes_to_send'] = []
-            uart0.bytes_to_send = []
-            return
-        #try:
-        #    data = text.encode('utf-8')
-        #    uart0.bytes_to_send = list(data)
-        #    self.uart0_config['bytes_to_send'] = list(data)
-        #except Exception:
-        #    data = b""
-        # simulate a response: echo back the same bytes
-        #try:
-        #    uart0.received_bytes = data
-        #except Exception:
-        #    pass
-        # update received text display and persist
-        # try:
-        #     recv_text = (getattr(uart0, 'received_bytes', b'') or b'').decode('utf-8', errors='replace')
-        #     if hasattr(self, 'uart0_receive_var'):
-        #         self.uart0_receive_var.set(recv_text)
-        #     self.uart0_config['received_text'] = recv_text
-        # except Exception:
-        #     pass
-        print(f"UART0 send: {text}")
-        self.uart0_config['bytes_to_send'] = text
-        try:
-            uart0.bytes_to_send = text
-        except Exception:
-            pass
 
-        self.send_pin_parameter(255, 'uart0_send', text)
+        # read checkbox state (you said you've added this)
+        is_hex = bool(self.uart0_hex_var.get()) if hasattr(self, "uart0_hex_var") else False
+        self.uart0_config["send_is_hex"] = is_hex
+
+        # empty -> clear
+        if not text.strip():
+            self.uart0_config["bytes_to_send"] = []
+            try:
+                uart0.bytes_to_send = []
+            except Exception:
+                pass
+            return
+
+        if is_hex:
+            # persist raw input
+            self.uart0_config["send_hex"] = text.strip()
+
+            # normalise hex -> "55 aa 0x0f" => "55AA0F"
+            try:
+                hex_str = self._normalise_hex(text)  # same helper you used for SPI
+            except Exception as e:
+                print(f"UART0 send hex parse error: {repr(e)}")
+                return
+
+            print(f"UART0 send HEX: {hex_str}")
+            self.uart0_config["bytes_to_send"] = hex_str
+            try:
+                uart0.bytes_to_send = hex_str
+            except Exception:
+                pass
+
+            # send to Pico
+            self.send_pin_parameter(255, "uart0_send_hex", hex_str)
+
+        else:
+            # ASCII mode
+            ascii_str = text  # keep exactly what user typed (spaces etc)
+            self.uart0_config["send_ascii"] = ascii_str
+
+            print(f"UART0 send ASCII: {ascii_str!r}")
+            self.uart0_config["bytes_to_send"] = ascii_str
+            try:
+                uart0.bytes_to_send = ascii_str
+            except Exception:
+                pass
+
+            # send to Pico
+            self.send_pin_parameter(255, "uart0_send_ascii", ascii_str)
 
 
     def update_uart0_baud(self, baud: int):
@@ -2881,19 +2990,55 @@ class PicoGUI(tk.Tk):
     def on_uart1_send(self, text: str):
         """Send text over UART1 (persist and show simulated response)."""
         text = str(text or "")
-        self.uart1_config['send_text'] = text
-        if not text:
-            self.uart1_config['bytes_to_send'] = []
-            uart1.bytes_to_send = []
-            return
-        print(f"UART1 send: {text}")
-        self.uart1_config['bytes_to_send'] = text
-        try:
-            uart1.bytes_to_send = text
-        except Exception:
-            pass
 
-        self.send_pin_parameter(255, 'uart1_send', text)
+        # read checkbox state (you said you've added this)
+        is_hex = bool(self.uart1_hex_var.get()) if hasattr(self, "uart1_hex_var") else False
+        self.uart1_config["send_is_hex"] = is_hex
+
+        # empty -> clear
+        if not text.strip():
+            self.uart1_config["bytes_to_send"] = []
+            try:
+                uart1.bytes_to_send = []
+            except Exception:
+                pass
+            return
+
+        if is_hex:
+            # persist raw input
+            self.uart1_config["send_hex"] = text.strip()
+
+            # normalise hex -> "55 aa 0x0f" => "55AA0F"
+            try:
+                hex_str = self._normalise_hex(text)  # same helper you used for SPI
+            except Exception as e:
+                print(f"UART1 send hex parse error: {repr(e)}")
+                return
+
+            print(f"UART1 send HEX: {hex_str}")
+            self.uart1_config["bytes_to_send"] = hex_str
+            try:
+                uart1.bytes_to_send = hex_str
+            except Exception:
+                pass
+
+            # send to Pico
+            self.send_pin_parameter(255, "uart1_send_hex", hex_str)
+
+        else:
+            # ASCII mode
+            ascii_str = text  # keep exactly what user typed (spaces etc)
+            self.uart1_config["send_ascii"] = ascii_str
+
+            print(f"UART1 send ASCII: {ascii_str!r}")
+            self.uart1_config["bytes_to_send"] = ascii_str
+            try:
+                uart1.bytes_to_send = ascii_str
+            except Exception:
+                pass
+
+            # send to Pico
+            self.send_pin_parameter(255, "uart1_send_ascii", ascii_str)
 
     def update_uart1_baud(self, baud: int):
         #try:

@@ -707,24 +707,47 @@ while True:
                     uart0_baud = int(value)
                     reinit_uart0()
 
-                elif param == "uart0_send":
-                    # value is string
+                elif param == "uart0_send_hex":
                     if uart0 is None:
                         print("255,uart0_recv,error_not_configured")
                         continue
 
-                    if len(value) > 2 and value[:2] == "0x":
-                        # interpret as hexadecimal
-                        value = value[2:]
-                        try:
-                            hex_string = bytes.fromhex(value)
-                        except Exception as e:
-                            print(f"255,uart0_send,failed,{repr(e)}")
-                            continue
-                        uart0.write(hex_string)
-                    else:
-                        # interpret as an ascii string
+                    v = value.strip()
+
+                    # allow optional 0x prefix and separators
+                    if v.startswith("0x") or v.startswith("0X"):
+                        v = v[2:]
+                    v = v.replace(" ", "").replace(",", "").replace("_", "")
+
+                    # hex must be even-length
+                    if len(v) % 2 != 0:
+                        print("255,uart0_send_hex,error_odd_length")
+                        continue
+
+                    try:
+                        data = bytes.fromhex(v)
+                    except Exception as e:
+                        print(f"255,uart0_send_hex,error_bad_hex,{repr(e)}")
+                        continue
+
+                    try:
+                        uart0.write(data)
+                        #print(f"255,uart0_send_hex,ok,{len(data)}")
+                    except Exception as e:
+                        print(f"255,uart0_send_hex,error_write,{repr(e)}")
+                
+                elif param == "uart0_send_ascii":
+                    if uart0 is None:
+                        print("255,uart0_recv,error_not_configured")
+                        continue
+
+                    try:
+                        # MicroPython UART.write accepts str or bytes
                         uart0.write(value)
+                        #print(f"255,uart0_send_ascii,ok,{len(value)}")
+                    except Exception as e:
+                        print(f"255,uart0_send_ascii,error_write,{repr(e)}")
+
                 
                 elif param == "uart1_tx":
                     v = int(value)
@@ -740,24 +763,46 @@ while True:
                     uart1_baud = int(value)
                     reinit_uart1()
 
-                elif param == "uart1_send":
-                    # value is string
+                elif param == "uart1_send_hex":
                     if uart1 is None:
                         print("255,uart1_recv,error_not_configured")
                         continue
-                    
-                    if len(value) > 2 and value[:2] == "0x":
-                        # interpret as hexadecimal
-                        value = value[2:]
-                        try:
-                            hex_string = bytes.fromhex(value)
-                        except Exception as e:
-                            print(f"255,uart1_send,failed,{repr(e)}")
-                            continue
-                        uart1.write(hex_string)
-                    else:
-                        # interpret as an ascii string
+
+                    v = value.strip()
+
+                    # allow optional 0x prefix and separators
+                    if v.startswith("0x") or v.startswith("0X"):
+                        v = v[2:]
+                    v = v.replace(" ", "").replace(",", "").replace("_", "")
+
+                    # hex must be even-length
+                    if len(v) % 2 != 0:
+                        print("255,uart1_send_hex,error_odd_length")
+                        continue
+
+                    try:
+                        data = bytes.fromhex(v)
+                    except Exception as e:
+                        print(f"255,uart1_send_hex,error_bad_hex,{repr(e)}")
+                        continue
+
+                    try:
+                        uart1.write(data)
+                        #print(f"255,uart1_send_hex,ok,{len(data)}")
+                    except Exception as e:
+                        print(f"255,uart1_send_hex,error_write,{repr(e)}")
+                
+                elif param == "uart1_send_ascii":
+                    if uart1 is None:
+                        print("255,uart1_recv,error_not_configured")
+                        continue
+
+                    try:
+                        # MicroPython UART.write accepts str or bytes
                         uart1.write(value)
+                        #print(f"255,uart1_send_ascii,ok,{len(value)}")
+                    except Exception as e:
+                        print(f"255,uart1_send_ascii,error_write,{repr(e)}")
 
 
                 elif param == "i2c0_sda":
