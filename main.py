@@ -756,7 +756,7 @@ while True:
                         try:
                             hex_string = bytes.fromhex(value)
                         except Exception as e:
-                            print(f"255,uart0_send,failed,{repr(e)}")
+                            print(f"255,i2c0_send,failed,{repr(e)}")
                             continue
                         try:
                             i2c0.writeto(address, hex_string)
@@ -775,6 +775,58 @@ while True:
                         print(f"0,i2c0_addresses,{addresses}")
                     else:
                         print("255, i2c0_scan,error_not_configured")
+                
+
+                elif param == "i2c1_sda":
+                    v = int(value)
+                    i2c1_sda_pin = None if v == 255 else v
+                    reinit_i2c1()
+
+                elif param == "i2c1_scl":
+                    v = int(value)
+                    i2c1_scl_pin = None if v == 255 else v
+                    reinit_i2c1()
+
+                elif param == "i2c1_freq":
+                    i2c1_freq = int(value)
+                    reinit_i2c1()
+
+                elif "i2c1_send" in param:
+                    # looks like i2c1_send:71
+                    # where 71 is the address
+
+                    address = int(param.split(":")[1])
+
+                    # value is string
+                    if i2c1 is None:
+                        print("255,i2c1_recv,error_not_configured")
+                        continue
+
+                    if len(value) > 2 and value[:2] == "0x":
+                        # interpret as hexadecimal
+                        value = value[2:]
+                        try:
+                            hex_string = bytes.fromhex(value)
+                        except Exception as e:
+                            print(f"255,i2c1_send,failed,{repr(e)}")
+                            continue
+                        try:
+                            i2c1.writeto(address, hex_string)
+                        except Exception as e:
+                            print(f"255,i2c1_error,transaction_failed,{repr(e)}")
+                    else:
+                        # interpret as an ascii string
+                        try:
+                            i2c1.writeto(address, value.encode("utf-8"))
+                        except Exception as e:
+                            print(f"255,i2c1_error,transaction_failed,{repr(e)}")
+
+                elif param == "i2c1_scan":
+                    if i2c1 is not None:
+                        addresses = i2c1.scan()
+                        print(f"0,i2c1_addresses,{addresses}")
+                    else:
+                        print("255, i2c1_scan,error_not_configured")
                     
             #except Exception as e:
             #    print(f"Error reading line: {e}")
