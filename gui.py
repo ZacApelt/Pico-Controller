@@ -261,6 +261,8 @@ class PicoGUI(tk.Tk):
         self.spi0_sck_selected = None
         self.spi0_csn = None
         self.spi0_config = {"mosi": None, "miso": None, "sck": None, "csn": None, "kbps": 1000, "send_hex": None, "received_bytes": None, "bytes_to_send": []}
+        self.spi0_hex_var = tk.IntVar(value=1)   # default to Hex ON (change to 0 if you prefer)
+        self.spi0_config["send_is_hex"] = True
 
         # SPI1 selections and config (mirrors SPI0 behaviour)
         self.spi1_mosi_selected = None
@@ -385,6 +387,32 @@ class PicoGUI(tk.Tk):
             elif param == "i2c1_addresses":
                 self.on_i2c1_scan_result(eval(value))
 
+    def _normalise_hex(self, s: str) -> str:
+        """
+        Accepts: '55', '0x55', '55 AA', '55,AA', '0x55 0xAA'
+        Returns: '55AA' (uppercase, no separators)
+        """
+        s = (s or "").strip()
+        if not s:
+            return ""
+
+        # remove common separators
+        s = s.replace(" ", "").replace(",", "").replace("_", "")
+
+        # allow repeated 0x prefixes by just removing all occurrences
+        s = s.replace("0x", "").replace("0X", "")
+
+        # validate hex chars only
+        hexdigits = "0123456789abcdefABCDEF"
+        if any(c not in hexdigits for c in s):
+            raise ValueError("Non-hex character in hex input")
+
+        # if odd number of nibbles, pad left with 0 (e.g. 'A' -> '0A')
+        if len(s) % 2 == 1:
+            s = "0" + s
+
+        return s.upper()
+    
     # ---------- layout ----------
 
     def _build_layout(self):
@@ -870,25 +898,52 @@ class PicoGUI(tk.Tk):
             print(f"SPI0 CSn selection invalid (pin {val} not DOUT)")
 
     def on_spi0_send(self, text: str):
-        text = str(text).strip()
-        # persist the entered hex text so it survives UI refreshes
-        self.spi0_config['send_hex'] = text
+        text = str(text)
 
-        if not text:
-            # also clear bytes_to_send
-            self.spi0_config['bytes_to_send'] = []
-            spi0.bytes_to_send = []
+        is_hex = bool(self.spi0_hex_var.get())
+        self.spi0_config["send_is_hex"] = is_hex
+
+        if not text.strip():
+            self.spi0_config["bytes_to_send"] = []
+            try:
+                spi0.bytes_to_send = []
+            except Exception:
+                pass
             return
 
-        print(f"SPI0 send: {text}")
-        # store both in local config and (if available) the spi0 object
-        self.spi0_config['bytes_to_send'] = text
-        try:
-            spi0.bytes_to_send = text
-        except Exception:
-            pass
+        if is_hex:
+            # store raw text for UI persistence
+            self.spi0_config["send_hex"] = text.strip()
 
-        self.send_pin_parameter(255, 'spi0_send', text)
+            try:
+                hex_str = self._normalise_hex(text)
+            except Exception as e:
+                print(f"SPI0 send hex parse error: {repr(e)}")
+                return
+
+            print(f"SPI0 send HEX: {hex_str}")
+            self.spi0_config["bytes_to_send"] = hex_str
+            try:
+                spi0.bytes_to_send = hex_str
+            except Exception:
+                pass
+
+            self.send_pin_parameter(255, "spi0_send_hex", hex_str)
+
+        else:
+            # ASCII mode
+            ascii_str = text  # keep spaces etc.
+            self.spi0_config["send_ascii"] = ascii_str
+
+            print(f"SPI0 send ASCII: {ascii_str!r}")
+            self.spi0_config["bytes_to_send"] = ascii_str
+            try:
+                spi0.bytes_to_send = ascii_str
+            except Exception:
+                pass
+
+            self.send_pin_parameter(255, "spi0_send_ascii", ascii_str)
+
 
     def update_spi0_speed(self, kbps: int):
         spi0.kilobits_per_second = kbps
@@ -1434,10 +1489,21 @@ class PicoGUI(tk.Tk):
             kbps_entry.bind("<Return>", lambda e: self.update_spi0_speed(float(kbps_var.get())))
             kbps_entry.bind("<FocusOut>", lambda e: self.update_spi0_speed(float(kbps_var.get())))
 
+
             # Send entry on its own line below other SPI0 controls
             row2 = ttk.Frame(spi0_box)
             row2.pack(fill="x", pady=(6, 0))
-            ttk.Label(row2, text="Send Hex:", width=9, anchor="w").pack(side="left", padx=(8, 0))
+
+            # SPI0 Hex checkbox (persistent)
+            hex_check = ttk.Checkbutton(
+                row2,
+                text="Hex",
+                variable=self.spi0_hex_var,
+                command=lambda: self.spi0_config.__setitem__("send_is_hex", bool(self.spi0_hex_var.get()))
+            )
+            hex_check.pack(side="left", padx=(10, 0))
+
+            ttk.Label(row2, text="Send:", width=9, anchor="w").pack(side="left", padx=(8, 0))
 
             # initialize or reuse StringVar so value persists across UI refreshes
             saved_send = self.spi0_config.get('send_hex', '')
@@ -1452,7 +1518,7 @@ class PicoGUI(tk.Tk):
                 self.spi0_send_var = tk.StringVar(value=saved_send if saved_send is not None else "")
 
             spi0_send_entry = tk.Entry(row2, width=20, textvariable=self.spi0_send_var)
-            spi0_send_entry.pack(side="left", padx=(4, 0))
+            spi0_send_entry.pack(side="left", padx=(0, 0))
             spi0_send_entry.bind("<Return>", lambda e: self.on_spi0_send(self.spi0_send_var.get()))
 
             ttk.Label(row2, text="  Received Bytes:", width=16, anchor="w").pack(side="left", padx=(16, 0))

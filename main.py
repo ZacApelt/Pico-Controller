@@ -545,7 +545,7 @@ while True:
                     spi0_baudrate = int(value) * 1000
                     reinit_spi0()
 
-                elif param == "spi0_send":
+                elif param == "spi0_send_hex":
                     # value is hex string bytes, e.g. "F7" or "0A1B2C"
                     if spi0 is None:
                         print("255,spi0_recv,error_not_configured")
@@ -569,6 +569,41 @@ while True:
                         spi0.write_readinto(tx, rx)
                     except Exception as e:
                         # ensure CSN released even on error
+                        if spi0_csn_pin is not None:
+                            try:
+                                pins[spi0_csn_pin].value(1)
+                            except Exception:
+                                pass
+                        print(f"255,spi0_recv,error,{repr(e)}")
+                        continue
+
+                    if spi0_csn_pin is not None:
+                        try:
+                            pins[spi0_csn_pin].value(1)
+                        except Exception:
+                            pass
+
+                    recv_hex = ''.join('{:02X}'.format(b) for b in rx)
+                    print(f"255,spi0_recv,{recv_hex}")
+                
+                elif param == "spi0_send_ascii":
+                    if spi0 is None:
+                        print("255,spi0_recv,error_not_configured")
+                        continue
+
+                    # Convert ASCII string to bytes to transmit
+                    tx = value.encode("utf-8")   # or "ascii" if you want strict ASCII
+                    rx = bytearray(len(tx))      # mutable buffer for received bytes
+
+                    if spi0_csn_pin is not None:
+                        try:
+                            pins[spi0_csn_pin].value(0)
+                        except Exception:
+                            pass
+
+                    try:
+                        spi0.write_readinto(tx, rx)
+                    except Exception as e:
                         if spi0_csn_pin is not None:
                             try:
                                 pins[spi0_csn_pin].value(1)
